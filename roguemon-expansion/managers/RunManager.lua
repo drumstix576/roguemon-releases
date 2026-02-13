@@ -44,12 +44,15 @@ function self.LoadNextRom()
     Main.loadNextSeed = false
 
     -- Manual new-run request (not triggered by ROM flag/watch).
-    -- Just write the flag and return to the main loop; the ROM handles the
+    -- Write the flag and re-enter the main loop; the ROM handles the
     -- transition back to the tower, and the full tracker restart happens
     -- naturally when the ROM-triggered randomization path fires.
     if not self.watchTriggered then
         Utils.printDebug(">> Reset requested")
         sendPlayerToTower()
+        -- Mark a clean exit so Main.Run() doesn't show the crash recovery screen.
+        CrashRecoveryScreen.logCrashReport(false)
+        Main.Run()
         return
     end
 
