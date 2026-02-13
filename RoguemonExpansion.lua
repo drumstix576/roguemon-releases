@@ -10,11 +10,15 @@ local function RoguemonExpansionExtension()
     self.initialized = false
     self.configError = nil  -- Set if config validation fails
 
-    self.version = "2.0.0-beta.11"
+    self.version = "2.0.0-beta.12"
     self.name = "RoguemonExpansion"
     self.author = "drumstix576"
     self.description = "Proof of concept adding tracker compatibility to Roguemon Expansion"
-    self.github = "drumstix576/roguemon-releases"
+    if self.version:find("-alpha%.") then
+        self.github = "drumstix576/roguemon-ironmonextension"
+    else
+        self.github = "drumstix576/roguemon-releases"
+    end
     self.url = string.format("https://github.com/%s", self.github or "")
 
     -- Build an absolute path to this extension's folder
