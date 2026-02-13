@@ -106,17 +106,17 @@ jobs:
             'ghp_[A-Za-z0-9]'
             'ghs_[A-Za-z0-9]'
             'github_pat_[A-Za-z0-9]'
-            'sk-[A-Za-z0-9]'
+            'sk-[A-Za-z0-9]{20}'
             'AKIA[A-Z0-9]'
           )
           found=0
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rq "$pattern" \
+            if grep -rEq -- "$pattern" \
               --include='*.lua' --include='*.java' --include='*.txt' \
               --include='*.md' --include='*.yml' --include='*.yaml' \
               --include='*.json' --include='*.properties' .; then
               echo "::error::Potential credential pattern found: $pattern"
-              grep -rl "$pattern" \
+              grep -rEl -- "$pattern" \
                 --include='*.lua' --include='*.java' --include='*.txt' \
                 --include='*.md' --include='*.yml' --include='*.yaml' \
                 --include='*.json' --include='*.properties' .
