@@ -10,7 +10,7 @@ local function RoguemonExpansionExtension()
     self.initialized = false
     self.configError = nil  -- Set if config validation fails
 
-    self.version = "2.0.0-beta.5"
+    self.version = "2.0.0-beta.11"
     self.name = "RoguemonExpansion"
     self.author = "drumstix576"
     self.description = "Proof of concept adding tracker compatibility to Roguemon Expansion"
