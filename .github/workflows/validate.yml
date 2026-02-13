@@ -1,0 +1,128 @@
+# AUTO-MANAGED — source of truth is release/workflows/ in drumstix576/roguemon.
+# This file is overwritten on every release. Do not edit in the release repo.
+name: Validate Release
+
+on:
+  pull_request:
+    branches:
+      - public
+      - beta
+  push:
+    branches:
+      - public
+      - beta
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No .gba files
+        run: |
+          if find . -name '*.gba' -not -path './.git/*' | grep -q .; then
+            echo "::error::Found .gba files in repository"
+            find . -name '*.gba' -not -path './.git/*'
+            exit 1
+          fi
+
+      - name: Validate tag format
+        run: |
+          TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || echo "")
+          if [ -n "$TAG" ]; then
+            if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
+              echo "::error::Invalid tag format: $TAG (expected vX.Y.Z or vX.Y.Z-beta.N)"
+              exit 1
+            fi
+          fi
+
+      - name: Tag is semantically newer
+        run: |
+          TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || echo "")
+          if [ -z "$TAG" ]; then
+            echo "No tag on HEAD — skipping version check"
+            exit 0
+          fi
+
+          PREV_TAG=$(git tag --merged HEAD --sort=-version:refname | grep -v "^${TAG}$" | head -1 || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            echo "First tag on this branch — skipping comparison"
+            exit 0
+          fi
+
+          parse_version() {
+            local ver="${1#v}"
+            local base="${ver%%-*}"
+            IFS='.' read -r major minor patch <<< "$base"
+            echo "$major $minor $patch"
+          }
+
+          read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "$(parse_version "$TAG")"
+          read -r PREV_MAJOR PREV_MINOR PREV_PATCH <<< "$(parse_version "$PREV_TAG")"
+
+          if [ "$CUR_MAJOR" -gt "$PREV_MAJOR" ]; then exit 0; fi
+          if [ "$CUR_MAJOR" -eq "$PREV_MAJOR" ] && [ "$CUR_MINOR" -gt "$PREV_MINOR" ]; then exit 0; fi
+          if [ "$CUR_MAJOR" -eq "$PREV_MAJOR" ] && [ "$CUR_MINOR" -eq "$PREV_MINOR" ] && [ "$CUR_PATCH" -gt "$PREV_PATCH" ]; then exit 0; fi
+
+          echo "::error::Tag $TAG is not semantically newer than $PREV_TAG"
+          exit 1
+
+      - name: Required files present
+        run: |
+          missing=0
+          for f in \
+            "RoguemonExpansion.lua" \
+            "roguemon-expansion/randomizer.jar" \
+            "roguemon-expansion/roguemon.bps" \
+            "roguemon-expansion/jbps.jar"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing required file: $f"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: File size checks
+        run: |
+          BPS="roguemon-expansion/roguemon.bps"
+          SIZE=$(stat -c%s "$BPS")
+          MIN=$((10 * 1024 * 1024))
+          MAX=$((32 * 1024 * 1024))
+          if [ "$SIZE" -lt "$MIN" ] || [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::$BPS size ($SIZE bytes) outside expected range (10-32 MB)"
+            exit 1
+          fi
+
+      - name: No secrets or credentials
+        run: |
+          PATTERNS=(
+            'PRIVATE KEY'
+            '-----BEGIN'
+            'ghp_[A-Za-z0-9]'
+            'ghs_[A-Za-z0-9]'
+            'github_pat_[A-Za-z0-9]'
+            'sk-[A-Za-z0-9]'
+            'AKIA[A-Z0-9]'
+          )
+          found=0
+          for pattern in "${PATTERNS[@]}"; do
+            if grep -rq "$pattern" \
+              --include='*.lua' --include='*.java' --include='*.txt' \
+              --include='*.md' --include='*.yml' --include='*.yaml' \
+              --include='*.json' --include='*.properties' .; then
+              echo "::error::Potential credential pattern found: $pattern"
+              grep -rl "$pattern" \
+                --include='*.lua' --include='*.java' --include='*.txt' \
+                --include='*.md' --include='*.yml' --include='*.yaml' \
+                --include='*.json' --include='*.properties' .
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            exit 1
+          fi
