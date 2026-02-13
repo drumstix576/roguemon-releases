@@ -204,16 +204,29 @@ function self.buildData()
     MiscData.BattleItems        = remapTable(MiscData.BattleItems, "BattleItems")
     MiscData.OtherItems         = remapTable(MiscData.OtherItems, "OtherItems")
 
-    -- Add Casteliacone to StatusItems so it counts toward the status cap
-    local castId = newItems["Casteliacone"] or newItemsUpper["CASTELIACONE"]
-    if castId and not MiscData.StatusItems[castId] then
-        MiscData.StatusItems[castId] = {
-            id = castId,
-            name = itemNames[castId],
-            icon = "full-heal",
-            type = MiscData.StatusType.All,
-            pocket = MiscData.BagPocket.Items,
-        }
+    -- Items with gItemEffect_FullHeal that the base tracker doesn't include.
+    -- All are StatusType.All (cure every status) in POCKET_ITEMS.
+    local fullHealItems = {
+        "Pewter Crunchies",
+        "Rage Candy Bar",
+        "Old Gateau",
+        "Casteliacone",
+        "Lumiose Galette",
+        "Shalour Sable",
+        "Big Malasada",
+        "Jubilife Muffin",
+    }
+    for _, name in ipairs(fullHealItems) do
+        local id = newItems[name] or newItemsUpper[name:upper()]
+        if id and not MiscData.StatusItems[id] then
+            MiscData.StatusItems[id] = {
+                id = id,
+                name = itemNames[id] or name,
+                icon = "full-heal",
+                type = MiscData.StatusType.All,
+                pocket = MiscData.BagPocket.Items,
+            }
+        end
     end
 end
 
