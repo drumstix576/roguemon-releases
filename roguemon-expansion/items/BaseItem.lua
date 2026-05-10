@@ -43,9 +43,15 @@ function BaseItem:getLabelText()
 end
 
 function BaseItem:getDescription()
-    if self.id and MiscData.ItemEnhancedDescriptions then
-        local desc = MiscData.ItemEnhancedDescriptions[self.id]
-        if desc then return desc end
+    if self.id then
+        if MiscData.ItemEnhancedDescriptions then
+            local desc = MiscData.ItemEnhancedDescriptions[self.id]
+            if desc then return desc end
+        end
+        if MiscData.ItemDescriptions then
+            local desc = MiscData.ItemDescriptions[self.id]
+            if desc then return desc end
+        end
     end
     return ""
 end
@@ -112,7 +118,7 @@ function BaseItem:renderOverlayIcon(ctx)
     end
     Drawing.drawImage(ctx.imagesDir .. self.icon, ctx.x, ctx.y, ctx.size, ctx.size)
     if self:shouldShowQuantity() then
-        Drawing.drawText(ctx.x + ctx.size - 7, ctx.y + ctx.size - 7, tostring(self.quantity or 0), 0xFF000000)
+        Drawing.drawText(ctx.x + ctx.size - 7, ctx.y + ctx.size - 7, tostring(self.quantity or 0), 0xFF000000, _G.PixelFont and false)
     end
     return true
 end

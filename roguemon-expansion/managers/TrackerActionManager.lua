@@ -77,7 +77,7 @@ function self.setupWatches()
         end
     end, addr, self.watchName, "System Bus")
 
-    Utils.printDebug("[TrackerActionManager] Watch registered at 0x%08X", addr)
+    Utils.printDebug("[TrackerAction] Watch registered at 0x%08X", addr)
 end
 
 -- Remove memory watches

@@ -23,7 +23,7 @@ local function withRestores(fn)
 end
 
 local function testRefreshChangeCounterWatchRegisters()
-    -- Utils.printDebug(">> Testing changeCounter watch registration")
+    -- Utils.printDebug("[TEST] Testing changeCounter watch registration")
     withRestores(function(stubGlobal, stubField)
         local manager = Roguemon.SegmentManager
         local calls = { onmemorywrite = {}, unregister = {} }
@@ -64,7 +64,7 @@ local function testRefreshChangeCounterWatchRegisters()
 end
 
 local function testRefreshChangeCounterWatchNoOp()
-    -- Utils.printDebug(">> Testing changeCounter watch no-op")
+    -- Utils.printDebug("[TEST] Testing changeCounter watch no-op")
     withRestores(function(stubGlobal, stubField)
         local manager = Roguemon.SegmentManager
         local calls = { onmemorywrite = 0, unregister = 0 }
@@ -102,7 +102,7 @@ local function testRefreshChangeCounterWatchNoOp()
 end
 
 local function testOnSaveBlock3Changed()
-    -- Utils.printDebug(">> Testing onSaveBlock3Changed")
+    -- Utils.printDebug("[TEST] Testing onSaveBlock3Changed")
     withRestores(function(stubGlobal, stubField)
         local manager = Roguemon.SegmentManager
         local setupCalls = 0
@@ -125,7 +125,7 @@ local function testOnSaveBlock3Changed()
 end
 
 local function testRegisterPoll()
-    -- Utils.printDebug(">> Testing registerPoll")
+    -- Utils.printDebug("[TEST] Testing registerPoll")
     withRestores(function(stubGlobal, stubField)
         local manager = Roguemon.SegmentManager
         local calls = { init = 0, setup = 0, process = 0, items = 0 }
@@ -146,7 +146,7 @@ local function testRegisterPoll()
 end
 
 local function testUnregisterPoll()
-    -- Utils.printDebug(">> Testing unregisterPoll")
+    -- Utils.printDebug("[TEST] Testing unregisterPoll")
     withRestores(function(stubGlobal, stubField)
         local manager = Roguemon.SegmentManager
         local calls = { unregister = {} }
@@ -166,7 +166,7 @@ local function testUnregisterPoll()
 end
 
 local function testCapsFromCompletedSegments()
-    -- Utils.printDebug(">> Testing cap calculations from completed segments")
+    -- Utils.printDebug("[TEST] Testing cap calculations from completed segments")
     withRestores(function(_, stubField)
         local manager = Roguemon.SegmentManager
         local segA = 2
@@ -196,7 +196,7 @@ local function testCapsFromCompletedSegments()
 end
 
 local function testCapModifiersApplied()
-    -- Utils.printDebug(">> Testing cap modifiers apply to totals")
+    -- Utils.printDebug("[TEST] Testing cap modifiers apply to totals")
     withRestores(function(_, stubField)
         local manager = Roguemon.SegmentManager
         local segA = 2
@@ -223,7 +223,7 @@ local function testCapModifiersApplied()
 end
 
 local function testAdjustModifiersWritesMemory()
-    -- Utils.printDebug(">> Testing modifier adjustments write memory")
+    -- Utils.printDebug("[TEST] Testing modifier adjustments write memory")
     withRestores(function(stubGlobal)
         local manager = Roguemon.SegmentManager
         local writes = {}
@@ -281,7 +281,7 @@ local function testAdjustModifiersWritesMemory()
 end
 
 function SegmentManagerTests.run()
-    Utils.printDebug("> Running SegmentManager tests")
+    Utils.printDebug("[TEST] Running SegmentManager tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -306,7 +306,7 @@ function SegmentManagerTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] SegmentManager tests completed with failures (see above)")
     else
-        Utils.printDebug("> SegmentManager tests passed")
+        Utils.printDebug("[TEST] SegmentManager tests passed")
     end
 end
 

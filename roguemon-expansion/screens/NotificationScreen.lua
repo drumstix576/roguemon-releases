@@ -40,23 +40,13 @@ function self.drawScreen()
 end
 
 local function closeScreen()
-    local prizeManager = Roguemon.PrizeManager
-    local hasPrizeQueue = false
-    if prizeManager and prizeManager.readPrizeState then
-        local state = prizeManager.readPrizeState()
-        hasPrizeQueue = state and (state.queueCount or 0) > 0
-    end
-
-    if hasPrizeQueue and prizeManager.openQueueScreen then
-        prizeManager.openQueueScreen()
-    elseif self.returnToPreviousScreen then
-        self.returnToPreviousScreen()
-    else
-        self.returnToHomeScreen()
-    end
     local onClose = self.onClose
     self.onClose = nil
     self.actionButton = nil
+    local hadMore = Roguemon.ScreenManager.closeActiveNotification()
+    if not hadMore then
+        self.returnToHomeScreen()
+    end
     if onClose then
         onClose()
     end

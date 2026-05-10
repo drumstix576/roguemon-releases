@@ -78,7 +78,7 @@ local ProgramTests = {
 }
 
 local function testTemplate()
-    -- Utils.printDebug(">> Testing function x")
+    -- Utils.printDebug("[TEST] Testing function x")
     local res = {}
     local reqParams = {
         "x",
@@ -93,7 +93,7 @@ local function testTemplate()
 end
 
 local function testRequiredParams()
-    -- Utils.printDebug(">> Testing required params")
+    -- Utils.printDebug("[TEST] Testing required params")
     -- Validate required GameSettings fields are present
     local required = {
         "gPlayerParty",
@@ -117,7 +117,7 @@ local function testRequiredParams()
 end
 
 local function testOffsetIntegrity()
-    -- Utils.printDebug(">> Testing offset integrity")
+    -- Utils.printDebug("[TEST] Testing offset integrity")
     local structSize = GameSettings.sizeofPokemon
     local offsetChecks = {
         offsetPokemonSubstruct = GameSettings.offsetPokemonSubstruct,
@@ -134,7 +134,7 @@ local function testOffsetIntegrity()
 end
 
 local function testPokemonRead()
-    -- Utils.printDebug(">> Testing pokemon read from game memory")
+    -- Utils.printDebug("[TEST] Testing pokemon read from game memory")
     local partyCount = Memory.readbyte(GameSettings.gPlayerPartyCount)
     if partyCount == nil or partyCount == 0 then
         Utils.printDebug("[WARN] Skipping Pokemon read tests; no party Pokemon available")
@@ -159,7 +159,7 @@ local function testPokemonRead()
 end
 
 local function testUpdatePokemonTeams()
-    -- Utils.printDebug(">> Testing update pokemon teams")
+    -- Utils.printDebug("[TEST] Testing update pokemon teams")
     local res = {}
     local reqParams = {
         "pstats",
@@ -187,7 +187,7 @@ end
 
 
 local function testNicknameReconstruction()
-    -- Utils.printDebug(">> Testing nickname reconstruction")
+    -- Utils.printDebug("[TEST] Testing nickname reconstruction")
     -- Nickname reconstruction check
     local startAddress = GameSettings.gPlayerParty
     local structSize = GameSettings.sizeofPokemon
@@ -214,14 +214,14 @@ local function testNicknameReconstruction()
 end
 
 local function testLROverride()
-    -- Utils.printDebug(">> Testing LR settings override")
+    -- Utils.printDebug("[TEST] Testing LR settings override")
     local lr = Roguemon.Core.Program.changeGameSettingForLR
     assert(Program.changeGameSettingForLR == lr, "LR override not applied")
     return true
 end
 
 local function testIsInEvolutionScene()
-    -- Utils.printDebug(">> Testing evolution scene")
+    -- Utils.printDebug("[TEST] Testing evolution scene")
     local res = {}
     local reqParams = {
         "sEvoStruct",
@@ -241,7 +241,7 @@ local function testIsInEvolutionScene()
 end
 
 local function testGetMoveIdFromTm()
-    -- Utils.printDebug(">> Testing get move from tm/hm")
+    -- Utils.printDebug("[TEST] Testing get move from tm/hm")
     local res = {}
     local gtm = GameSettings.gTMHMItemMoveIds
     local tmCount = GameSettings.tmCount
@@ -286,7 +286,7 @@ local function testGetMoveIdFromTm()
 end
 
 local function testGetNextLevelExp()
-    -- Utils.printDebug(">> Testing get next level exp")
+    -- Utils.printDebug("[TEST] Testing get next level exp")
     local res = {}
     local info = GameSettings.gSpeciesInfo
     local gext = GameSettings.gExperienceTables
@@ -311,7 +311,7 @@ local function testGetNextLevelExp()
 end
 
 local function testReadTrainerGameData()
-    -- Utils.printDebug(">> Testing read trainer game data")
+    -- Utils.printDebug("[TEST] Testing read trainer game data")
     local res = {}
     local gt = GameSettings.gTrainers
     assert(gt ~= nil and gt > 0, "GameSettings.gTrainers is not defined")
@@ -333,7 +333,7 @@ local function testReadTrainerGameData()
 end
 
 local function testReadEncryptedSubstruct()
-    -- Utils.printDebug(">> Testing substruct decrypt")
+    -- Utils.printDebug("[TEST] Testing substruct decrypt")
     local buf = Roguemon.Core.Utils.base64_decode(ProgramTests.pokemonb64)
     local b, w, d, s = Roguemon.LoaderUtils.readers(buf)
 
@@ -359,7 +359,7 @@ local function testReadEncryptedSubstruct()
 end
 
 local function testParseGrowthSubstruct()
-    -- Utils.printDebug(">> Testing parse growth substruct")
+    -- Utils.printDebug("[TEST] Testing parse growth substruct")
     local res = {}
     res.growthSubstruct = Roguemon.Core.Program.parseGrowthSubstruct(
         ProgramTests.growth1,
@@ -372,7 +372,7 @@ local function testParseGrowthSubstruct()
 end
 
 local function testParseAttackSubstruct()
-    -- Utils.printDebug(">> Testing parse attack substruct")
+    -- Utils.printDebug("[TEST] Testing parse attack substruct")
     local res = {}
     res.moveIds, res.movePPs = Roguemon.Core.Program.parseAttackSubstruct(
         ProgramTests.attack1,
@@ -384,7 +384,7 @@ local function testParseAttackSubstruct()
 end
 
 local function testParseMiscSubstruct()
-    -- Utils.printDebug(">> Testing parse misc substruct")
+    -- Utils.printDebug("[TEST] Testing parse misc substruct")
     local res = {}
     res.miscSubstruct = Roguemon.Core.Program.parseMiscSubstruct(
         ProgramTests.misc1,
@@ -396,7 +396,7 @@ local function testParseMiscSubstruct()
 end
 
 local function testParseStatusAndStats()
-    -- Utils.printDebug(">> Testing parse status and stats")
+    -- Utils.printDebug("[TEST] Testing parse status and stats")
     local res = {}
     local buf = Roguemon.Core.Utils.base64_decode(ProgramTests.pokemonb64)
     local b, w, d, s = Roguemon.LoaderUtils.readers(buf)
@@ -421,7 +421,7 @@ end
 local function testGetPokemonTypes()
     -- ROGUEMON-TODO: Load a predefined pokemon into memory to compare against so types are known
     -- ROGUEMON-TODO: Test doubles/enemy pokemon types as well
-    -- Utils.printDebug(">> Testing get battle pokemon types")
+    -- Utils.printDebug("[TEST] Testing get battle pokemon types")
     local res = {}
     local gbm = GameSettings.gBattleMons
     res.offsetTypes = GameSettings.offsetTypes
@@ -445,7 +445,7 @@ local function testGetPokemonTypes()
 end
 
 local function testUpdateMapLocation()
-    -- Utils.printDebug(">> Testing update map location")
+    -- Utils.printDebug("[TEST] Testing update map location")
     local res = {}
     res.offsetMapHeaderLayoutId = GameSettings.offsetMapHeaderLayoutId
 
@@ -459,7 +459,7 @@ local function testUpdateMapLocation()
 end
 
 function ProgramTests.run()
-    Utils.printDebug("> Running Program tests")
+    Utils.printDebug("[TEST] Running Program tests")
     local tests = Roguemon.Tests
 
 
@@ -494,7 +494,7 @@ function ProgramTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Program tests completed with failures (see above)")
     else
-        Utils.printDebug("> Program tests passed")
+        Utils.printDebug("[TEST] Program tests passed")
     end
 end
 

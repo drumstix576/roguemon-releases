@@ -68,20 +68,30 @@ end
 function self.decodeNicknameFromBuf(buf, growth2, growth3, byteReader)
     local chars = {}
     local nicknameLen = GameSettings.sizeofPokemonNickname
-    for i = 0, nicknameLen - 1 do
+    -- Config includes terminator in count; struct field holds (nicknameLen - 1) bytes
+    local fieldSize = nicknameLen > 0 and (nicknameLen - 1) or 0
+    local terminated = false
+    for i = 0, fieldSize - 1 do
         local charByte = byteReader(buf, 8 + i)
-        if charByte == Program.Addresses.nicknameCharEnd then break end
+        if charByte == Program.Addresses.nicknameCharEnd then
+            terminated = true
+            break
+        end
         chars[#chars + 1] = GameSettings.GameCharMap[charByte] or Constants.HIDDEN_INFO
     end
 
-    -- Remaining two characters are stored in the growth substruct (nickname11/12).
-    local extra1 = Utils.getbits(growth2, 21, 8)
-    if extra1 ~= Program.Addresses.nicknameCharEnd and GameSettings.GameCharMap[extra1] then
-        chars[#chars + 1] = GameSettings.GameCharMap[extra1]
-    end
-    local extra2 = Utils.getbits(growth3, 22, 8)
-    if extra2 ~= Program.Addresses.nicknameCharEnd and GameSettings.GameCharMap[extra2] then
-        chars[#chars + 1] = GameSettings.GameCharMap[extra2]
+    -- Characters 11-12 are stored in the growth substruct (nickname11/nickname12).
+    -- Only read these when the main field was full (no early terminator); otherwise
+    -- these bits contain uninitialized data from CreateBoxMon's stack.
+    if not terminated then
+        local extra1 = Utils.getbits(growth2, 21, 8)
+        if extra1 ~= Program.Addresses.nicknameCharEnd and GameSettings.GameCharMap[extra1] then
+            chars[#chars + 1] = GameSettings.GameCharMap[extra1]
+            local extra2 = Utils.getbits(growth3, 22, 8)
+            if extra2 ~= Program.Addresses.nicknameCharEnd and GameSettings.GameCharMap[extra2] then
+                chars[#chars + 1] = GameSettings.GameCharMap[extra2]
+            end
+        end
     end
 
     return Utils.formatSpecialCharacters(table.concat(chars))
@@ -220,6 +230,10 @@ local function refreshPokemonDynamicFields(pokemon, startAddress, personality, o
     pokemon.roguemonChosen = Utils.getbits(growth3, 30, 1)
     pokemon.ppBonuses = Utils.getbits(growth3, 0, 8)
 
+    -- Re-read nickname so mid-game renames (e.g. Name Rater) are picked up
+    local function memByte(_, off) return Memory.readbyte(startAddress + off) end
+    pokemon.nickname = self.decodeNicknameFromBuf(nil, growth2, growth3, memByte)
+
     pokemon.status = statusStats.status
     pokemon.sleep_turns = statusStats.sleep_turns
     pokemon.level = statusStats.level
@@ -260,6 +274,10 @@ local function refreshPokemonDynamicFields(pokemon, startAddress, personality, o
         spe = Utils.getbits(effort1, 24, 8),
     }
     pokemon.ivs = Utils.convertIVNumberToTable(misc2)
+
+    -- Refresh nature: hiddenNatureModifier (set by mints) XORs with personality nature
+    local hiddenNatureMod = Utils.getbits(Memory.readbyte(startAddress + 0x12), 3, 5)
+    pokemon.nature = Utils.bit_xor(personality % 25, hiddenNatureMod)
 end
 
 function self.readNewPokemon(startAddress, personality)
@@ -315,7 +333,7 @@ function self.readNewPokemon(startAddress, personality)
         ppBonuses = growth.ppBonuses,
         level = statusStats.level,
         gender = MiscData.getMonGender(growth.species, personality),
-        nature = personality % 25,
+        nature = Utils.bit_xor(personality % 25, Utils.getbits(b(buf, 0x12), 3, 5)),
         isEgg = misc.isEgg,
         gigantamaxFactor = misc.gigantamaxFactor,
         isShiny = isShiny,
@@ -348,11 +366,37 @@ end
 function self.getPokemonTypes(isOwn, isLeft)
     local ownerAddressOffset = Utils.inlineIf(isOwn, 0, GameSettings.sizeofBattlePokemon)
     local leftAddressOffset = Utils.inlineIf(isLeft, 0, GameSettings.offsetBattlePokemonDoublesPartner) or 0
-    local typesData = Memory.readword(GameSettings.gBattleMons + GameSettings.offsetBattlePokemonTypes + ownerAddressOffset + leftAddressOffset)
-    return {
-        PokemonData.TypeIndexMap[Utils.getbits(typesData, 0, 8)],
-        PokemonData.TypeIndexMap[Utils.getbits(typesData, 8, 8)],
-    }
+    local baseAddr = GameSettings.gBattleMons + GameSettings.offsetBattlePokemonTypes + ownerAddressOffset + leftAddressOffset
+    local typesData = Memory.readword(baseAddr)
+    local type1 = PokemonData.TypeIndexMap[Utils.getbits(typesData, 0, 8)]
+    local type2 = PokemonData.TypeIndexMap[Utils.getbits(typesData, 8, 8)]
+    -- If type1 was removed (Double Shock / Burn Up), promote type2 to slot 1
+    -- so core rendering (which gates on types[1] ~= UNKNOWN) still shows it.
+    if type1 == PokemonData.Types.UNKNOWN and type2 ~= PokemonData.Types.UNKNOWN then
+        type1 = type2
+    end
+    if type2 == PokemonData.Types.UNKNOWN then
+        type2 = PokemonData.Types.EMPTY
+    end
+    -- Read third type slot (e.g. added by Trick-or-Treat / Forest's Curse)
+    local thirdTypeByte = Memory.readbyte(baseAddr + 2)
+    local thirdType = PokemonData.TypeIndexMap[thirdTypeByte]
+    local validThird = thirdType
+        and thirdType ~= PokemonData.Types.UNKNOWN
+        and thirdType ~= PokemonData.Types.EMPTY
+    if not validThird then
+        return { type1, type2 }
+    end
+    -- Already has this type → no change
+    if thirdType == type1 or thirdType == type2 then
+        return { type1, type2 }
+    end
+    -- Single-type mon: third type replaces the duplicate second slot
+    if type1 == type2 then
+        return { type1, thirdType }
+    end
+    -- Dual-type mon: genuinely triple-typed
+    return { type1, type2, thirdType }
 end
 
 function self.getMoveIdFromTMHMNumber(tmhmNumber, isHM)
@@ -385,6 +429,13 @@ function self.readTrainerGameData(trainerId)
     trainer.trainerPic = Memory.readbyte(startAddress + 0x16)
     trainer.trainerBackPic = Memory.readbyte(startAddress + 0x2D)
     trainer.trainerClass = Memory.readbyte(startAddress + 0x14)
+
+    trainer.aiFlags = Memory.readdword(startAddress + GameSettings.offsetTrainerFlagsAI)
+    -- NOTE: The ROM's aiFlags is a u64 field. The core tracker only checks bits 0-2 for display
+    -- (CHECK_BAD_MOVE, TRY_TO_FAINT, CHECK_VIABILITY) and labels anything with bit 2 as "Smart".
+    -- The ROM now uses AI_FLAG_SMART_TRAINER (bits 0-2 + 14,16,17,25,27) and AI_FLAG_ACE_POKEMON
+    -- (bit 15) on boss/elite trainers. If a distinction between "Basic" and "Smart" AI is needed,
+    -- override the display logic to check higher bits (e.g. bit 16 = OMNISCIENT).
 
     -- Battle type is packed with startingStatus; battleType bit0-1, startingStatus bit2-7
     local battleByte = Memory.readbyte(startAddress + 0x24)
@@ -515,15 +566,37 @@ function self.isInEvolutionScene()
     local taskID = Memory.readbyte(evoInfo + Program.Addresses.offsetEvoInfoTaskId)
 
     -- only 16 tasks possible max in gTasks
-    if taskID > 15 then return false end
+    if taskID > 15 then
+        -- Task not valid, but evolution display may still be pending.
+        -- The ROM sets evolutionPending before the task ends; hold off
+        -- updatePokemonTeams until the cb2 watch fires and shows the
+        -- PrettyStatScreen (which also clears the flag).
+        return self.isEvolutionDisplayPending()
+    end
 
     -- Check for Evolution Task (Task_EvolutionScene + 1)
     local taskFunc = Memory.readdword(GameSettings.gTasks + (Program.Addresses.sizeofTaskStruct * taskID))
-    if taskFunc ~= GameSettings.Task_EvolutionScene then return false end
+    if taskFunc ~= GameSettings.Task_EvolutionScene then
+        return self.isEvolutionDisplayPending()
+    end
 
     -- Check if the Task is active
     local isActive = Memory.readbyte(GameSettings.gTasks + (Program.Addresses.sizeofTaskStruct * taskID) + Program.Addresses.offsetTaskIsActive)
-    return isActive == 1
+    if isActive == 1 then
+        return true
+    end
+
+    return self.isEvolutionDisplayPending()
+end
+
+function self.isEvolutionDisplayPending()
+    local base = GameSettings.roguemonTrackerDataAddr
+    local offset = GameSettings.roguemonTrackerEvolutionPendingOffset
+        or (GameSettings.roguemonTrackerChecklistActiveOffset and GameSettings.roguemonTrackerChecklistActiveOffset + 1)
+    if not base or base == 0 or not offset then
+        return false
+    end
+    return Memory.readbyte(base + offset) ~= 0
 end
 
 return self

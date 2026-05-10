@@ -71,61 +71,6 @@ local EvoCondition = {
     CONDITIONS_END = 0x27, -- enum EvolutionConditions in include/constants/pokemon.h
 }
 
-local cachedStoneMap = nil
-
--- In Roguemon, all evolution stones are replaced with a single "Roguestone"
--- (the randomizer renames Moon Stone to ROGUESTONE and removes all other stones).
--- This function builds a map from the Roguestone item ID to an evolution method
--- object that displays "Roguestone" in the tracker UI.
-local function buildStoneMap()
-    local map = {}
-    local roguestoneId = nil
-    local stones = MiscData and MiscData.EvolutionStones or nil
-
-    if type(stones) == "table" then
-        for itemId, item in pairs(stones) do
-            local name = (item.name or ""):lower()
-            -- The randomizer renames Moon Stone to "Rogue Stone"
-            if name:find("rogue") then
-                roguestoneId = itemId
-                map[itemId] = {
-                    abbreviation = "ROGUE",
-                    short = { "Roguestone" },
-                    detailed = { "Roguestone" },
-                    evoItemIds = { itemId },
-                }
-            end
-        end
-    end
-
-    -- Update the core tracker's evolution method tables to use the Roguestone ID
-    -- for any pokemon that evolves by stone (they all use Roguestone now)
-    if roguestoneId then
-        local evos = PokemonData.Evolutions
-        local stoneEvos = { "MOON", "THUNDER", "FIRE", "WATER", "LEAF", "SUN" }
-        for _, evoName in ipairs(stoneEvos) do
-            if evos[evoName] then
-                evos[evoName].evoItemIds = { roguestoneId }
-            end
-        end
-        -- Multi-stone evolutions also all become Roguestone
-        if evos.LEAF_SUN then evos.LEAF_SUN.evoItemIds = { roguestoneId } end
-        if evos.WATER30 then evos.WATER30.evoItemIds = { roguestoneId } end
-        if evos.WATER37 then evos.WATER37.evoItemIds = { roguestoneId } end
-        if evos.WATER37_REV then evos.WATER37_REV.evoItemIds = { roguestoneId } end
-        if evos.EEVEE_STONES then evos.EEVEE_STONES.evoItemIds = { roguestoneId } end
-    end
-
-    return map
-end
-
-local function getStoneEvolution(itemId)
-    if cachedStoneMap == nil then
-        cachedStoneMap = buildStoneMap()
-    end
-    return cachedStoneMap and cachedStoneMap[itemId]
-end
-
 local function hasFriendshipCondition(paramsPtr)
     if not paramsPtr or paramsPtr == 0 then
         return false
@@ -175,6 +120,9 @@ function self.readLevelUpMoves(pokemonID, isMoveLvls)
     local offsetLearnset = GameSettings.offsetSpeciesLearnset
 
     local levelUpLearnsetPtr = Memory.readdword(offsetBaseStats + (pokemonID * sizeofBaseStats) + offsetLearnset)
+    if levelUpLearnsetPtr == nil or levelUpLearnsetPtr == 0 then
+        return learnedMoves
+    end
 
     -- MAX of 100 iterations, as a failsafe
     for i=0, 99, 1 do
@@ -243,12 +191,23 @@ function self.readSpeciesInfoBuf(buf, id)
     local evoPtr = offsetEvos and d(buf, start + offsetEvos) or 0
     local isFinalEvo = (evoPtr == 0) or (Memory.readword(evoPtr) == 0)
 
+    -- Learnset pointer — used post-buildData to group species with shared randomized
+    -- movepools into pokemon.linkedForms (linked battle-forme families).
+    local learnsetPtr = GameSettings.offsetSpeciesLearnset
+        and d(buf, start + GameSettings.offsetSpeciesLearnset) or 0
+
     -- Other fields
     local pokemonName    = s(buf, start + GameSettings.offsetSpeciesName, GameSettings.pokemonNameLength + 1)
     local catchRate      = b(buf, start + GameSettings.offsetCatchRate)
     local expYield       = w(buf, start + GameSettings.offsetExpYield)
     local friendshipBase = b(buf, start + GameSettings.offsetBaseFriendship)
-    local weight         = w(buf, start + GameSettings.pokemonWeightOffset)
+    local weight         = w(buf, start + GameSettings.pokemonWeightOffset) / 10
+    local natDexNum      = w(buf, start + GameSettings.offsetSpeciesNatDex)
+
+    -- Species flags (u32 bitfield)
+    local formFlagsOffset = GameSettings.speciesFormFlagsOffset
+    local speciesFlags = formFlagsOffset and d(buf, start + formFlagsOffset) or 0
+    local isCosmetic = (speciesFlags & (1 << 21)) ~= 0
 
     return {
         pokemonID = id,
@@ -264,8 +223,11 @@ function self.readSpeciesInfoBuf(buf, id)
 
         _evoPtr = evoPtr,
         isFinalEvo = isFinalEvo,
+        learnsetPtr = learnsetPtr,
 
         weight = weight,
+        natDexNum = natDexNum,
+        isCosmetic = isCosmetic,
     }
 end
 
@@ -305,11 +267,16 @@ function self.readEvolution(pokemon)
         elseif evoType == EvoMethod.LEVEL_BST then  -- EVO_LEVEL_BST (BST/10, hidden level)
             return EvoBST
         elseif evoType == EvoMethod.ITEM then  -- EVO_ITEM
-            local method = getStoneEvolution(evoParam)
-            if method then
-                return method
-            end
-            return PokemonData.Evolutions.EEVEE_STONES
+            local itemName = (MiscData.Items and MiscData.Items[evoParam])
+                or (Resources.Game and Resources.Game.ItemNames and Resources.Game.ItemNames[evoParam])
+                or string.format("Item %d", evoParam)
+            local abbrev = itemName:gsub("[%s_]*[Ss]tone$", ""):upper()
+            return {
+                abbreviation = abbrev,
+                short = { itemName },
+                detailed = { itemName },
+                evoItemIds = { evoParam },
+            }
         else
             Utils.printDebug("[WARN] Unexpected method for species %s (%d) at 0x%08X: type %d, species %d, param %d", 
                 pokemon.name, pokemon.pokemonID, ptr + (cursor * 12), evoType, evoSpecies, evoParam
@@ -433,6 +400,57 @@ function self.buildData(forced)
         pokemon.abilities = attachLazyLoadField(pokemon, lazyLoadAbilities)
         attachLazyLoadEvoField(pokemon)
     end
+
+    -- Post-pass: For natDexNum groups where ALL forms are cosmetic (e.g. Vivillon
+    -- patterns), promote the first form to non-cosmetic so one representative stays
+    -- visible in the log viewer and coverage calc.
+    local natDexGroups = {} -- natDexNum -> { hasNonCosmetic, firstCosmeticId }
+    for i = 1, GameSettings.gNumPokemon do
+        local pk = PokemonData.Pokemon[i]
+        if pk and pk.natDexNum and pk.natDexNum > 0 then
+            local g = natDexGroups[pk.natDexNum]
+            if not g then
+                g = { hasNonCosmetic = false, firstCosmeticId = nil }
+                natDexGroups[pk.natDexNum] = g
+            end
+            if pk.isCosmetic then
+                if not g.firstCosmeticId then
+                    g.firstCosmeticId = i
+                end
+            else
+                g.hasNonCosmetic = true
+            end
+        end
+    end
+    for _, g in pairs(natDexGroups) do
+        if not g.hasNonCosmetic and g.firstCosmeticId then
+            PokemonData.Pokemon[g.firstCosmeticId].isCosmetic = false
+        end
+    end
+
+    -- Post-pass: group species sharing a learnset pointer into linked-forme families.
+    -- After randomization, every tail in a linkedBattleFormes family points to the
+    -- same levelUpLearnset as its head, so pointer identity == shared movepool.
+    -- Used by Battle.lua to mirror tracked moves/abilities across all family members.
+    local byPtr = {}
+    for i = 1, GameSettings.gNumPokemon do
+        local pk = PokemonData.Pokemon[i]
+        if pk and pk.learnsetPtr and pk.learnsetPtr ~= 0 then
+            local group = byPtr[pk.learnsetPtr]
+            if not group then
+                group = {}
+                byPtr[pk.learnsetPtr] = group
+            end
+            table.insert(group, i)
+        end
+    end
+    for i = 1, GameSettings.gNumPokemon do
+        local pk = PokemonData.Pokemon[i]
+        if pk then
+            local group = pk.learnsetPtr and byPtr[pk.learnsetPtr]
+            pk.linkedForms = (group and #group > 1) and group or { i }
+        end
+    end
 end
 
 -- Override to include Fairy type in effectiveness calculations.
@@ -481,6 +499,16 @@ function self.namesToList()
         table.insert(pokemonNames, pokemon.name)
     end
     return pokemonNames
+end
+
+-- Override: Expansion ROM uses National Dex ordering (internal ID = national ID).
+-- The base tracker's dex maps rearrange Gen 3 internal IDs; we use identity.
+function self.dexMapInternalToNational(pokemonID)
+    return pokemonID or 0
+end
+
+function self.dexMapNationalToInternal(pokemonID)
+    return pokemonID or 0
 end
 
 return self

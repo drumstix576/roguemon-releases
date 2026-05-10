@@ -22,7 +22,7 @@ local function findItemIdByName(name)
 end
 
 local function testPocketInfo()
-    -- Utils.printDebug(">> Testing RogueMon pocket info")
+    -- Utils.printDebug("[TEST] Testing RogueMon pocket info")
     local res = {}
     local reqParams = {
         "bagRoguemonOffset",
@@ -44,7 +44,7 @@ local function testPocketInfo()
 end
 
 local function testReadPocket()
-    -- Utils.printDebug(">> Testing RogueMon pocket read")
+    -- Utils.printDebug("[TEST] Testing RogueMon pocket read")
     local items = Roguemon.ItemManager.readRoguemonPocket(true)
     assert(items ~= nil, "readRoguemonPocket returned nil")
     assert(#items == GameSettings.bagRoguemonCount,
@@ -53,7 +53,7 @@ local function testReadPocket()
 end
 
 local function testItemPocketMapping()
-    -- Utils.printDebug(">> Testing item pocket mapping")
+    -- Utils.printDebug("[TEST] Testing item pocket mapping")
     local names = {
         "Revive",
         "Max Revive",
@@ -78,7 +78,7 @@ local function testItemPocketMapping()
 end
 
 local function testQuantityHelpers()
-    -- Utils.printDebug(">> Testing RogueMon pocket quantity helpers")
+    -- Utils.printDebug("[TEST] Testing RogueMon pocket quantity helpers")
     local reviveId = findItemIdByName("Revive")
     assert(reviveId ~= nil, "Missing item id for Revive")
 
@@ -92,7 +92,7 @@ local function testQuantityHelpers()
 end
 
 function ItemManagerTests.run()
-    Utils.printDebug("> Running item manager tests")
+    Utils.printDebug("[TEST] Running item manager tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -113,7 +113,7 @@ function ItemManagerTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] ItemManager tests completed with failures (see above)")
     else
-        Utils.printDebug("> ItemManager tests passed")
+        Utils.printDebug("[TEST] ItemManager tests passed")
     end
 end
 

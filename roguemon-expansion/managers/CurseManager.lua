@@ -4,6 +4,7 @@ local self = {
     State = {},
     lastChangeCounter = nil,
     changeCounterWatchName = "Roguemon:CurseChangeCounterWatch",
+    baseSeedWatchName = "Roguemon:CurseBaseSeedWatch",
     logEnabled = true,
     initialStateLoaded = false,
     previousTheme = nil,
@@ -108,9 +109,9 @@ self.CurseNames = {
 local STATE_FLAG_FORGETFULNESS_APPLIED = 0x80000000
 local STATE_FLAG_DOWNSIZING_APPLIED = 0x40000000
 local STATE_FLAG_POLTERGEIST_PENALTY = 0x20000000
+local STATE_FLAG_SWAP_USED = 0x10000000
 
 local WARDED_UNUSED = 0xFF
-local SWAP_UNUSED = 0xFF
 local ASSIGNMENT_MAX = 8
 
 local function getSaveBlock3Addr()
@@ -136,8 +137,6 @@ local function getCurseStateOffsets()
         activeCurseId = GameSettings.curseStateActiveCurseIdOffset,
         assignedCurses = GameSettings.curseStateAssignedCursesOffset,
         assignedSegments = GameSettings.curseStateAssignedSegmentsOffset,
-        swapIndexA = GameSettings.curseStateSwapIndexAOffset,
-        swapIndexB = GameSettings.curseStateSwapIndexBOffset,
         timeWarpSavedExp = GameSettings.curseStateTimeWarpExpOffset,
         changeCounter = GameSettings.curseStateChangeCounterOffset,
     }
@@ -157,14 +156,17 @@ local function readCurseDef(curseId, baseAddr, entrySize)
     local flagsOffset = GameSettings.curseDefFlagsOffset or 1
     local nameOffset = GameSettings.curseDefNameOffset or 2
     local descOffset = GameSettings.curseDefDescriptionOffset or 6
+    local longDescOffset = GameSettings.curseDefLongDescriptionOffset
 
     local id = Memory.readbyte(base + idOffset)
     local flags = Memory.readbyte(base + flagsOffset)
     local namePtr = Memory.readdword(base + nameOffset)
     local descPtr = Memory.readdword(base + descOffset)
+    local longDescPtr = longDescOffset and Memory.readdword(base + longDescOffset) or 0
 
     local name = readGbaString(namePtr, 128)
     local description = readGbaString(descPtr, 256)
+    local longDescription = readGbaString(longDescPtr, 512)
 
     -- Fall back to local names if ROM read fails
     if not name or name == "" then
@@ -176,6 +178,7 @@ local function readCurseDef(curseId, baseAddr, entrySize)
         flags = flags,
         name = name,
         description = description,
+        longDescription = longDescription,
     }
 end
 
@@ -198,8 +201,6 @@ function self.readCurseState()
         baseSeed = Memory.readdword(base + offsets.baseSeed),
         stateFlags = Memory.readdword(base + offsets.stateFlags),
         activeCurseId = Memory.readbyte(base + offsets.activeCurseId),
-        swapIndexA = Memory.readbyte(base + offsets.swapIndexA),
-        swapIndexB = Memory.readbyte(base + offsets.swapIndexB),
         timeWarpSavedExp = Memory.readdword(base + offsets.timeWarpSavedExp),
         changeCounter = Memory.readdword(base + offsets.changeCounter),
         assignedCurses = {},
@@ -245,9 +246,37 @@ function self.isCurseActive(state)
     return self.getActiveCurseId(state) ~= self.CurseId.NONE
 end
 
+-- Cached Clairvoyance item ID (looked up from MiscData.Items by name)
+local clairvoyanceItemId = nil
+
+function self.hasClairvoyance()
+    if clairvoyanceItemId == nil then
+        clairvoyanceItemId = Roguemon.ItemManager
+            and Roguemon.ItemManager.getItemIdByName
+            and Roguemon.ItemManager.getItemIdByName("Clairvoyance")
+            or false
+    end
+    if not clairvoyanceItemId then return false end
+    return Roguemon.ItemManager.hasRoguemonItem(clairvoyanceItemId, 1)
+end
+
 function self.isClairvoyanceUsed(state)
-    local st = state or self.State or self.readCurseState()
-    return st and st.clairvoyanceUsed or false
+    return self.hasClairvoyance()
+end
+
+function self.canSwapCurses()
+    if not self.hasClairvoyance() then return false end
+
+    local st = self.State or self.readCurseState()
+    if st and Utils.bit_and(st.stateFlags or 0, STATE_FLAG_SWAP_USED) ~= 0 then
+        return false
+    end
+
+    local prizeState = Roguemon.PrizeManager.readPrizeState()
+    if not prizeState then return false end
+    if (prizeState.queueCount or 0) > 0 then return false end
+    if not Roguemon.PrizeManager.isFlowIdle(prizeState) then return false end
+    return true
 end
 
 function self.isWardedSegment(segId, state)
@@ -263,6 +292,8 @@ function self.getCurseForSegment(segId, state)
     if not st or not st.assignedCurses or not st.assignedSegments then
         return nil
     end
+    -- SwapCurses modifies assignedCurses directly in save data, so no
+    -- index redirection is needed — the raw arrays are already correct.
     for i, assignedSeg in ipairs(st.assignedSegments) do
         if assignedSeg == segId then
             local curseId = st.assignedCurses[i]
@@ -274,24 +305,56 @@ function self.getCurseForSegment(segId, state)
     return nil
 end
 
+function self.getSegmentName(segmentId)
+    if not segmentId then return "???" end
+    local seg = Roguemon.SegmentManager.SegmentsById and Roguemon.SegmentManager.SegmentsById[segmentId]
+    if seg and seg.name and seg.name ~= "" then
+        return seg.name
+    end
+    return string.format("Segment %d", segmentId)
+end
+
+function self.getCurseName(curseId)
+    if not curseId or curseId == 0 then return nil end
+    local def = self.CurseDefsById and self.CurseDefsById[curseId]
+    if def and def.name then
+        local trimmed = def.name:match("^%s*(.-)%s*$")
+        if trimmed and trimmed ~= "" then
+            return trimmed
+        end
+    end
+    return self.CurseNames[curseId] or string.format("Curse %d", curseId)
+end
+
+--- Returns the extended (long) description for a curse, falling back to the short ROM description.
+function self.getExtendedDescription(curseId)
+    if not curseId or curseId == 0 then return "" end
+    local def = self.CurseDefsById and self.CurseDefsById[curseId]
+    if def then
+        if def.longDescription and def.longDescription ~= "" then
+            return def.longDescription
+        end
+        if def.description and def.description ~= "" then
+            return def.description
+        end
+    end
+    return ""
+end
+
+function self.countWrappedLines(wrapped)
+    if not wrapped or wrapped == "" then return 1 end
+    local lines = 1
+    for _ in wrapped:gmatch("\n") do
+        lines = lines + 1
+    end
+    return lines
+end
+
 function self.getCurseNameForSegment(segId, state)
     local curseId = self.getCurseForSegment(segId, state)
-    if not curseId then
-        return nil
-    end
-    -- Only reveal curse name if Clairvoyance has been used or segment is current/completed
-    local st = state or self.State or self.readCurseState()
-    if st and st.clairvoyanceUsed then
-        -- Check CurseDefsById first, but only if name is non-empty after trimming
-        local def = self.CurseDefsById[curseId]
-        if def and def.name then
-            local trimmed = def.name:match("^%s*(.-)%s*$")
-            if trimmed and trimmed ~= "" then
-                return trimmed
-            end
-        end
-        -- Fall back to hardcoded CurseNames table
-        return self.CurseNames[curseId] or string.format("Curse %d", curseId)
+    if not curseId then return nil end
+    if self.hasClairvoyance() then
+        return self.getCurseName(curseId)
     end
     return "???"
 end
@@ -301,15 +364,18 @@ function self.getAssignments(state)
     if not st or not st.assignedCurses or not st.assignedSegments then
         return {}
     end
+    -- SwapCurses modifies assignedCurses directly in save data, so no
+    -- index redirection is needed here — the raw arrays are already correct.
     local assignments = {}
     for i, curseId in ipairs(st.assignedCurses) do
         local segId = st.assignedSegments[i]
         if curseId and curseId ~= self.CurseId.NONE and segId ~= nil then
             assignments[#assignments + 1] = {
+                assignmentIndex = i,
                 curseId = curseId,
                 segmentId = segId,
                 curseName = self.CurseNames[curseId] or string.format("Curse %d", curseId),
-                isRevealed = st.clairvoyanceUsed,
+                isRevealed = self.hasClairvoyance(),
                 isWarded = segId == st.wardedSegment,
             }
         end
@@ -496,6 +562,8 @@ function self.onSegmentChanged(newSegmentState, prevSegmentState)
     -- Only trigger callback if activeCurseId actually changed
     if prevCurseId ~= newCurseId then
         Utils.printDebug("[Curse] activeCurseId changed, triggering callback")
+        -- Curse info notification is handled by ROM via tracker action
+        -- (raised at preview screen close or warp case 12 for non-preview maps).
         self.State = state
         self.lastChangeCounter = state.changeCounter
         if self.onStateChanged then
@@ -523,6 +591,7 @@ function self.applyCurseTheme()
         self.previousTheme = currentTheme
     end
     Theme.importThemeFromText(CURSE_THEME, true)
+    Theme.settingsUpdated = false  -- Don't persist the curse theme to Settings.ini
     Program.redraw(true)
 end
 
@@ -537,12 +606,18 @@ function self.restorePreviousTheme()
         return
     end
     if self.previousTheme then
-        Utils.printDebug("[Curse] Restoring theme...")
+        Utils.printDebug("[Curse] Restoring saved theme...")
         Theme.importThemeFromText(self.previousTheme, true)
         self.previousTheme = nil
         Program.redraw(true)
-    else
-        Utils.printDebug("[Curse] No previous theme to restore")
+    elseif self.isCurrentThemeCurseTheme() then
+        -- previousTheme was lost (e.g. tracker reloaded mid-curse), fall back to default
+        Utils.printDebug("[Curse] No saved theme, restoring default preset")
+        local defaultPreset = Theme.Presets and Theme.PresetsIndex and Theme.Presets[Theme.PresetsIndex.DEFAULT]
+        if defaultPreset and defaultPreset.code then
+            Theme.importThemeFromText(defaultPreset.code, true)
+        end
+        Program.redraw(true)
     end
 end
 
@@ -639,12 +714,26 @@ function self.setupWatches()
         end
     end, addr, self.changeCounterWatchName, "System Bus")
 
-    Utils.printDebug("[CurseManager] Watch registered at 0x%08X", addr)
+    -- Watch baseSeed so initialization is detected via watch instead of
+    -- polling every 30 frames.  ROM writes baseSeed once after savestate
+    -- restore; this fires curseDirty so processUpdate() picks it up.
+    if offsets.baseSeed then
+        local seedAddr = base + offsets.baseSeed
+        event.onmemorywrite(function()
+            if Roguemon.UpdateManager then
+                Roguemon.UpdateManager.curseDirty = true
+            end
+        end, seedAddr, self.baseSeedWatchName, "System Bus")
+        Utils.printDebug("[Curse] baseSeed watch registered at 0x%08X", seedAddr)
+    end
+
+    Utils.printDebug("[Curse] Watch registered at 0x%08X", addr)
 end
 
 -- Remove memory watches
 function self.teardownWatches()
     event.unregisterbyname(self.changeCounterWatchName)
+    event.unregisterbyname(self.baseSeedWatchName)
 end
 
 -- Legacy alias for compatibility
@@ -659,6 +748,24 @@ function self.unregisterPoll()
     self.lastChangeCounter = nil
     -- Restore theme if curse was active
     self.restorePreviousTheme()
+end
+
+local TRACKER_ACTION_SHOW_CURSE_INFO = 8
+
+function self.registerTrackerActions(actionManager)
+    if not actionManager or not actionManager.registerHandler then return end
+    actionManager.registerHandler(TRACKER_ACTION_SHOW_CURSE_INFO, function(arg)
+        local curseId = arg or 0
+        -- The ROM's action argument is authoritative. Trusting it is required
+        -- for the Warding Charm case, where the notification fires alongside
+        -- the "Ward?" prompt and activeCurseId stays NONE until the player
+        -- declines. ROM-side gating: OnSegmentStart queues only when a curse
+        -- actually activates; the WC prompt raises inline with the decision.
+        if curseId ~= self.CurseId.NONE
+            and not Roguemon.ScreenManager.isNotificationActive() then
+            Roguemon.ScreenManager.showCurseInfo(curseId)
+        end
+    end)
 end
 
 function self.buildData(forced)
@@ -711,7 +818,7 @@ end
 function self.debugCurseState()
     local state = self.readCurseState() or self.State
     if not state then
-        Utils.printDebug("[CurseDebug] curse state unavailable")
+        Utils.printDebug("[Curse] curse state unavailable")
         return
     end
 

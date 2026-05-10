@@ -23,7 +23,7 @@ local function withRestores(fn)
 end
 
 local function testCapReminderShownInRunSummary()
-    -- Utils.printDebug(">> Testing cap reminder appears in run summary")
+    -- Utils.printDebug("[TEST] Testing cap reminder appears in run summary")
     withRestores(function(stubGlobal)
         local drawn = { texts = {}, images = {} }
 
@@ -123,7 +123,7 @@ local function testCapReminderShownInRunSummary()
 end
 
 function RunSummaryScreenTests.run()
-    Utils.printDebug("> Running RunSummaryScreen tests")
+    Utils.printDebug("[TEST] Running RunSummaryScreen tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -141,7 +141,7 @@ function RunSummaryScreenTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] RunSummaryScreen tests completed with failures (see above)")
     else
-        Utils.printDebug("> RunSummaryScreen tests passed")
+        Utils.printDebug("[TEST] RunSummaryScreen tests passed")
     end
 end
 

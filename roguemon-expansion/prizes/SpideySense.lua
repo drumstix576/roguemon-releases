@@ -21,22 +21,37 @@ local function isSpideySenseActive()
     return Roguemon.ItemManager.hasRoguemonItem(spideySenseItemId, 1)
 end
 
+local SPIDEY_MOVE_KEYS = {
+    "CounterId",
+    "MirrorCoatId",
+    "DestinyBondId",
+    "ComeuppanceId",
+    "MetalBurstId",
+    "FinalGambitId",
+    "SpiderWebId",
+}
+
 local function getSpideyMoveIds()
-    local counterId = (MoveData and MoveData.Values and MoveData.Values.CounterId) or 194
-    local mirrorCoatId = (MoveData and MoveData.Values and MoveData.Values.MirrorCoatId) or 243
-    local destinyBondId = (MoveData and MoveData.Values and MoveData.Values.DestinyBondId) or 68
-    return counterId, mirrorCoatId, destinyBondId
+    local ids = {}
+    local values = MoveData and MoveData.Values
+    if values then
+        for _, key in ipairs(SPIDEY_MOVE_KEYS) do
+            if values[key] then
+                ids[values[key]] = true
+            end
+        end
+    end
+    return ids
 end
 
 function self.applySpideySense(mon)
     if not (mon and mon.moves) then
         return
     end
-    local counterId, mirrorCoatId, destinyBondId = getSpideyMoveIds()
+    local ids = getSpideyMoveIds()
     for _, mv in pairs(mon.moves) do
-        local moveId = mv.id
-        if moveId == counterId or moveId == mirrorCoatId or moveId == destinyBondId then
-            Tracker.TrackMove(mon.pokemonID, moveId, mon.level)
+        if ids[mv.id] then
+            Tracker.TrackMove(mon.pokemonID, mv.id, mon.level)
         end
     end
 end

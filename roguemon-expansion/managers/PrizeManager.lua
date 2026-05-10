@@ -27,6 +27,7 @@ local PRIZE_TASK_TERA_TYPE = 8
 local PRIZE_TASK_MINT_BOOST = 9
 local PRIZE_TASK_MINT_NERF = 10
 local PRIZE_TASK_ROGUESTONE = 11
+local PRIZE_TASK_CLAIRVOYANCE = 12
 local PRIZE_FLAG_PENDING_ANY = 0x01
 local PRIZE_FLAG_PENDING_RESULT = 0x02
 local PRIZE_FLAG_REJECTED = 0x04
@@ -47,6 +48,7 @@ self.Tasks = {
     MINT_BOOST = PRIZE_TASK_MINT_BOOST,
     MINT_NERF = PRIZE_TASK_MINT_NERF,
     ROGUESTONE = PRIZE_TASK_ROGUESTONE,
+    CLAIRVOYANCE = PRIZE_TASK_CLAIRVOYANCE,
 }
 
 function self.isFlowIdle(state)
@@ -143,6 +145,8 @@ local function getPrizeStateOffsets()
         natureMintNerf = GameSettings.prizeStateNatureMintNerfOffset,
         roguestoneOfferIndex = GameSettings.prizeStateRoguestoneOfferIndexOffset,
         roguestoneOfferHpCost = GameSettings.prizeStateRoguestoneOfferHpCostOffset,
+        roguestoneNextOfferSegment = GameSettings.prizeStateRoguestoneNextOfferSegmentOffset,
+        roguestoneNextOfferHpCost = GameSettings.prizeStateRoguestoneNextOfferHpCostOffset,
         starterPackMove = GameSettings.prizeStateStarterPackMoveOffset,
         starterPackOption = GameSettings.prizeStateStarterPackOptionOffset,
         changeCounter = GameSettings.prizeStateChangeCounterOffset,
@@ -167,6 +171,43 @@ local function getPrizeHistoryOffsets()
         extraValue = GameSettings.prizeHistoryExtraValueOffset,
         extraValue2 = GameSettings.prizeHistoryExtraValue2Offset,
     }
+end
+
+local AWARD_FIGHT_ROUTE_12_13 = 6
+local AWARD_FIGHT_ROUTE_14_15 = 7
+
+local function getPrizeAwardFlagsAddr()
+    local sb3 = getSaveBlock3Addr()
+    if not sb3 or sb3 == 0 or not GameSettings.prizeAwardedFlagsOffset then
+        return nil
+    end
+    return sb3 + GameSettings.prizeAwardedFlagsOffset
+end
+
+function self.isAwardFlagSet(flagId)
+    local base = getPrizeAwardFlagsAddr()
+    if not base then
+        return false
+    end
+    local index = math.floor(flagId / 32)
+    local bit = flagId % 32
+    local word = Memory.readdword(base + (index * 4)) or 0
+    return Utils.bit_and(word, Utils.bit_lshift(1, bit)) ~= 0
+end
+
+function self.getDisplayName(prizeId)
+    local def = self.PrizeDefsById and self.PrizeDefsById[prizeId] or nil
+    if not def then
+        return string.format("Prize %d", prizeId)
+    end
+    if def.name == "Fight Route X" then
+        if not self.isAwardFlagSet(AWARD_FIGHT_ROUTE_12_13) then
+            return "Fight Route 12 + 13"
+        else
+            return "Fight Route 14 + 15"
+        end
+    end
+    return def.name or ""
 end
 
 local function readPrizeDef(prizeId, baseAddr, entrySize)
@@ -259,7 +300,7 @@ function self.loadPrizeModules()
     registerTaskScreen(self, PRIZE_TASK_CHOICE, "PrizeChoiceScreen")
 
     local baseDir = Roguemon.extensionDir .. "prizes" .. FileManager.slash
-    local moduleNames = { "ArmorPlating", "BoosterShot", "HyperTraining", "NatureMint", "AncestralGift", "PotionInvestment", "Roguestone", "TeraOrb" }
+    local moduleNames = { "ArmorPlating", "BoosterShot", "HyperTraining", "NatureMint", "AncestralGift", "PotionInvestment", "Roguestone", "TeraOrb", "Clairvoyance" }
     for _, name in ipairs(moduleNames) do
         local path = baseDir .. name .. ".lua"
         local ok, modOrFactory = pcall(dofile, path)
@@ -327,6 +368,8 @@ function self.readPrizeState()
                 natureMintNerfStat = b(buf, offsets.natureMintNerf),
                 roguestoneOfferIndex = b(buf, offsets.roguestoneOfferIndex),
                 roguestoneOfferHpCost = b(buf, offsets.roguestoneOfferHpCost),
+                roguestoneNextOfferSegmentId = b(buf, offsets.roguestoneNextOfferSegment),
+                roguestoneNextOfferHpCost = b(buf, offsets.roguestoneNextOfferHpCost),
                 starterPackMoveId = w(buf, offsets.starterPackMove),
                 starterPackOptionIndex = b(buf, offsets.starterPackOption),
                 changeCounter = d(buf, offsets.changeCounter),
@@ -379,6 +422,8 @@ function self.readPrizeState()
         natureMintNerfStat = Memory.readbyte(base + offsets.natureMintNerf),
         roguestoneOfferIndex = Memory.readbyte(base + offsets.roguestoneOfferIndex),
         roguestoneOfferHpCost = Memory.readbyte(base + offsets.roguestoneOfferHpCost),
+        roguestoneNextOfferSegmentId = Memory.readbyte(base + offsets.roguestoneNextOfferSegment),
+        roguestoneNextOfferHpCost = Memory.readbyte(base + offsets.roguestoneNextOfferHpCost),
         starterPackMoveId = Memory.readword(base + offsets.starterPackMove),
         starterPackOptionIndex = Memory.readbyte(base + offsets.starterPackOption),
         changeCounter = Memory.readdword(base + offsets.changeCounter),
@@ -395,6 +440,40 @@ function self.readPrizeState()
     end
 
     return state
+end
+
+function self.readPoolRemaining()
+    local trackerDataAddr = GameSettings.roguemonTrackerDataAddr
+    if not trackerDataAddr or trackerDataAddr == 0 then
+        return {}
+    end
+
+    local countOffset = GameSettings.roguemonTrackerPoolRemainingCountOffset
+    local itemsOffset = GameSettings.roguemonTrackerPoolRemainingItemsOffset
+    local maxItems = GameSettings.roguemonTrackerPoolRemainingMax
+    if not countOffset or not itemsOffset or not maxItems then
+        return {}
+    end
+
+    local count = Memory.readbyte(trackerDataAddr + countOffset)
+    if not count or count == 0 then
+        return {}
+    end
+    if count > maxItems then
+        count = maxItems
+    end
+
+    local out = {}
+    for i = 0, count - 1 do
+        local prizeId = Memory.readword(trackerDataAddr + itemsOffset + (i * 2))
+        if prizeId and prizeId ~= PRIZE_NONE then
+            out[#out + 1] = {
+                prizeId = prizeId,
+                name = self.getDisplayName(prizeId),
+            }
+        end
+    end
+    return out
 end
 
 function self.readPrizeHistory()
@@ -467,6 +546,7 @@ function self.handleQueueScreen(newState, prevState)
             or taskId == PRIZE_TASK_MINT_BOOST
             or taskId == PRIZE_TASK_MINT_NERF
             or taskId == PRIZE_TASK_ROGUESTONE
+            or taskId == PRIZE_TASK_CLAIRVOYANCE
     end
 
     local function getTaskId(state)
@@ -483,7 +563,7 @@ function self.handleQueueScreen(newState, prevState)
         tostring(taskId), tostring(prevTaskId), newState.flowState or 0)
 
     if isQueueScreenTask(taskId) then
-        if Program.currentScreen ~= Roguemon.Screens.NotificationScreen then
+        if not Roguemon.ScreenManager.isNotificationActive() then
             self.openQueueScreen()
         end
     elseif isQueueScreenTask(prevTaskId) then
@@ -498,8 +578,14 @@ function self.handleQueueScreen(newState, prevState)
             or Program.currentScreen == Roguemon.Screens.RoguestoneScreen
             or Program.currentScreen == Roguemon.Screens.NatureMintBoostScreen
             or Program.currentScreen == Roguemon.Screens.NatureMintNerfScreen
+            or Program.currentScreen == Roguemon.Screens.CurseOverviewScreen
+            or Program.currentScreen == Roguemon.Screens.ClairvoyanceSwapScreen
         then
-            Roguemon.ScreenManager.returnToHomeScreen()
+            if Roguemon.TrackerDataManager.isChecklistActive() then
+                Roguemon.Screens.ChecklistScreen.show()
+            else
+                Roguemon.ScreenManager.returnToHomeScreen()
+            end
         end
     end
 end
@@ -1073,7 +1159,7 @@ end
 function self.debugPrizeState()
     local state = self.readPrizeState() or self.State
     if not state then
-        Utils.printDebug("[PrizeDebug] prize state unavailable")
+        Utils.printDebug("[Prize] prize state unavailable")
         return
     end
 
@@ -1191,6 +1277,15 @@ function self.submitRoguestoneDecision(accept)
     return self.setPendingResult(PRIZE_TASK_ROGUESTONE, value, 0)
 end
 
+function self.submitClairvoyanceSwap(indexA, indexB)
+    if indexA == nil or indexB == nil then return false end
+    return self.setPendingResult(PRIZE_TASK_CLAIRVOYANCE, indexA, indexB)
+end
+
+function self.submitClairvoyanceSkip()
+    return self.setPendingResult(PRIZE_TASK_CLAIRVOYANCE, 0xFF, 0)
+end
+
 function self.getQueueHead(state)
     local cur = state or self.readPrizeState()
     if not cur or (cur.queueCount or 0) == 0 then
@@ -1219,6 +1314,9 @@ function self.openQueueScreen()
     if screenKey then
         local screen = (type(screenKey) == "table") and screenKey or Roguemon.Screens[screenKey]
         if screen and Program.currentScreen ~= screen then
+            -- Remember current screen so back button returns here
+            Roguemon.ScreenManager.previousScreen = Program.currentScreen
+            Drawing.drawBackgroundAndMargins()
             Roguemon.ScreenManager.setCurrentRoguemonScreen(screen)
             Program.changeScreenView(screen)
         end

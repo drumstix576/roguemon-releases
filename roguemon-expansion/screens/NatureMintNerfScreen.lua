@@ -146,7 +146,7 @@ function self.clearScreen()
 end
 
 self.Buttons = {
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         if self.returnToPreviousScreen then
             self.returnToPreviousScreen()
         else

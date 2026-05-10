@@ -3,7 +3,7 @@ local AbilityTests = {
 }
 
 local function testUpdateResources()
-    -- Utils.printDebug(">> Testing update resources") 
+    -- Utils.printDebug("[TEST] Testing update resources") 
     local res = {}
     local reqParams = {
         "abilitiesCount",
@@ -44,7 +44,7 @@ local function testUpdateResources()
 end
 
 local function testAbilitiesCount()
-    -- Utils.printDebug(">> Testing abilities count")
+    -- Utils.printDebug("[TEST] Testing abilities count")
     local res = {}
     local reqParams = {
         abilitiesCount,
@@ -64,7 +64,7 @@ end
 
 
 function AbilityTests.run()
-    Utils.printDebug("> Running ability tests")
+    Utils.printDebug("[TEST] Running ability tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -83,7 +83,7 @@ function AbilityTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Ability tests completed with failures (see above)")
     else
-        Utils.printDebug("> Ability tests passed")
+        Utils.printDebug("[TEST] Ability tests passed")
     end
 end
 

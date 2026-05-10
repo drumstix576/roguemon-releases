@@ -14,7 +14,7 @@ local LoaderUtilsTests = {
 }
 
 local function testLoaderUtils()
-    -- Utils.printDebug(">> Testing loader utils")
+    -- Utils.printDebug("[TEST] Testing loader utils")
     local res = {}
     local reqParams = {
     }
@@ -45,7 +45,7 @@ local function testLoaderUtils()
 end
 
 function LoaderUtilsTests.run()
-    Utils.printDebug("> Running loader utils tests")
+    Utils.printDebug("[TEST] Running loader utils tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -63,7 +63,7 @@ function LoaderUtilsTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] LoaderUtils tests completed with failures (see above)")
     else
-        Utils.printDebug("> LoaderUtils tests passed")
+        Utils.printDebug("[TEST] LoaderUtils tests passed")
     end
 end
 

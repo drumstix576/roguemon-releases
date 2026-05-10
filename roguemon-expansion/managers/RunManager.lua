@@ -3,6 +3,14 @@ local self = {
     lastIconSet = nil,
 }
 
+local function diagBeforeMainRun(reason)
+    local nestDepth = 0
+    for _ in string.gmatch(debug.traceback(), "in field 'Run'") do nestDepth = nestDepth + 1 end
+    local luaMemKB = collectgarbage("count")
+    Utils.printDebug("[Diag] -> Main.Run() (%s) | nest depth: %d | Lua heap: %.1f MB",
+        reason, nestDepth, luaMemKB / 1024)
+end
+
 function self.getSkipAutoSaveFlagPath()
     local ext = Roguemon
     if not ext or not ext.extensionDir then
@@ -21,16 +29,33 @@ local function markSkipAutoSaveLoad()
     end
 end
 
+-- Persist current BizHawk sound state across full tracker restarts.
+-- Uses a Lua global (_G survives Main.Run / startTracker re-init;
+-- Utils.wasSoundOn does not).
+function self.saveSoundState()
+    if not Main.IsOnBizhawk() then return end
+    _G.__roguemonSoundRestore = client.GetSoundOn()
+end
+
+-- Restore sound state saved by saveSoundState(). One-shot: clears after use.
+function self.restoreSoundState()
+    if not Main.IsOnBizhawk() then return end
+    local saved = _G.__roguemonSoundRestore
+    if saved == nil then return end
+    _G.__roguemonSoundRestore = nil
+    client.SetSoundOn(saved)
+end
+
 function self.LoadNextRom()
     local function getROMAscension()
         local ascension = Roguemon.Core.Utils.readGameVar(GameSettings.roguemonAscensionOffset)
-        Utils.printDebug(">> Chosen ascension: %d", ascension)
+        Utils.printDebug("[Run] Chosen ascension: %d", ascension)
         return ascension
     end
 
     local function getROMRunType()
         local runType = Roguemon.Core.Utils.readGameVar(GameSettings.roguemonRunTypeOffset)
-        Utils.printDebug(">> Chosen run type: %d", runType)
+        Utils.printDebug("[Run] Chosen run type: %d", runType)
         return runType
     end
 
@@ -38,7 +63,7 @@ function self.LoadNextRom()
         local flagBit = 1 << GameSettings.backToTowerOffset
         local newFlags = Memory.readbyte(GameSettings.sSpecialFlags) | flagBit
         Memory.writebyte(GameSettings.sSpecialFlags, newFlags)
-        Utils.printDebug("Sent player to tower")
+        Utils.printDebug("[Run] Sent player to tower")
     end
 
     Main.loadNextSeed = false
@@ -48,10 +73,14 @@ function self.LoadNextRom()
     -- transition back to the tower, and the full tracker restart happens
     -- naturally when the ROM-triggered randomization path fires.
     if not self.watchTriggered then
-        Utils.printDebug(">> Reset requested")
+        Utils.printDebug("[Run] Reset requested")
+        -- Leaderboard LOSS event is now ROM-driven: sendPlayerToTower writes
+        -- FLAG_BACK_TO_TOWER, the ROM runs EventScript_FieldWhiteOutRoguemon
+        -- → CB2_WhiteOut, which publishes LB_EVENT_LOSS. No Lua-side hook.
         sendPlayerToTower()
         -- Mark a clean exit so Main.Run() doesn't show the crash recovery screen.
         CrashRecoveryScreen.logCrashReport(false)
+        diagBeforeMainRun("manual reset")
         Main.Run()
         return
     end
@@ -66,7 +95,7 @@ function self.LoadNextRom()
         Drawing.clearImageCache()
     end
     self.lastIconSet = currentIconSet
-    Utils.printDebug(">> Randomizing")
+    Utils.printDebug("[Run] Randomizing")
     markSkipAutoSaveLoad()
 
     local ascension = getROMAscension()
@@ -91,11 +120,12 @@ function self.LoadNextRom()
         Tracker.clearTrackerNotesAndFile()
 
         local ext = Roguemon
+        local activeRomPath = ext.getActiveRomPath()
         local successStamp = self.stampRomFile(nextRomInfo.filePath, ascension, runType)
-        local successOverwrite = FileManager.CopyFile(nextRomInfo.filePath, ext.Paths.ROGUEMON_ROM, 'overwrite')
+        local successOverwrite = FileManager.CopyFile(nextRomInfo.filePath, activeRomPath, 'overwrite')
         -- Copy the log file alongside the ROM so the log viewer can find it
         local logSrc = nextRomInfo.filePath .. FileManager.Extensions.RANDOMIZER_LOGFILE
-        local logDst = ext.Paths.ROGUEMON_ROM .. FileManager.Extensions.RANDOMIZER_LOGFILE
+        local logDst = activeRomPath .. FileManager.Extensions.RANDOMIZER_LOGFILE
         FileManager.CopyFile(logSrc, logDst, 'overwrite')
         if successStamp and successOverwrite then
             self.markRandomizationComplete()
@@ -108,9 +138,10 @@ function self.LoadNextRom()
             end
 
             savestate.save(statePath, true)
-            client.openrom(ext.Paths.ROGUEMON_ROM)
+            client.openrom(activeRomPath)
             savestate.load(statePath, true)
 
+            diagBeforeMainRun("randomization complete")
             Main.Run()
             return
         else
@@ -119,6 +150,7 @@ function self.LoadNextRom()
     end
 
     Utils.tempEnableBizhawkSound()
+    diagBeforeRun("randomization fallback")
     Main.Run()
 end
 
@@ -163,29 +195,47 @@ function self.stampRomFile(romFilePath, ascension, runType)
     return true
 end
 
-local STATIC_PROFILE_ID = "8cca5a43-967c-469a-858b-123456789abc"
+local SPLIT_PROFILE_ID = "8cca5a43-967c-469a-858b-123456789abc"
+local CLASSIC_PROFILE_ID   = "8cca5a43-967c-469a-858b-000000000001"
+local TRACKER_ACTION_SWITCH_PROFILE = 4
 
--- Manages a static run profile that is used for RogueMon.
+-- Manages static run profiles for RogueMon Split and Classic.
 -- Actions are idempotent.
 function self.setupRunProfile()
+    local ext = Roguemon
     local uid, ascension, typeIndex = self.getRomStamp()
 
     Options["Generate ROM each time"] = true
     Options["Game Over condition"]    = "EntirePartyFaints"
-    Options.FILES["Randomizer JAR"]   = Roguemon.Paths.RANDOMIZER_JAR
-    Options.FILES["Source ROM"]       = Roguemon.Paths.ROGUEMON_UNRAND_ROM
+    Options.FILES["Randomizer JAR"]   = ext.Paths.RANDOMIZER_JAR
+    Options.FILES["Source ROM"]       = ext.getSourceRomPath()
 
-    -- Skip FileManager.createFolder; the directory is shipped with the extension
-    Options.Overrides["ROMs and Logs"] = Roguemon.Paths.GENERATED_ROMS
+    local isClassic = ext.isClassicProfile()
+    -- Per-profile subdirectories ship with the extension (kept via .gitkeep);
+    -- skip FileManager.createFolder so we don't pay an OS spawn per startup.
+    Options.Overrides["ROMs and Logs"] = ext.getGeneratedRomsDir(isClassic)
+    Options.Overrides["Attempt Counts"] = ext.getGeneratedAttemptsDir(isClassic)
 
-    local profile = QuickloadScreen.IProfile:new({
-        Name = "RogueMon",
+    local splitProfile = QuickloadScreen.IProfile:new({
+        Name = "RogueMon Split",
         Mode = "Generate",
         GameVersion = "firered",
         GameOverCondition = Options["Game Over condition"],
-        GUID = STATIC_PROFILE_ID,
+        GUID = SPLIT_PROFILE_ID,
         Paths = {
-            Rom = Options.FILES["Source ROM"],
+            Rom = ext.Paths.ROGUEMON_UNRAND_ROM,
+            Jar = Options.FILES["Randomizer JAR"],
+        }
+    })
+
+    local classicProfile = QuickloadScreen.IProfile:new({
+        Name = "RogueMon Classic",
+        Mode = "Generate",
+        GameVersion = "firered",
+        GameOverCondition = Options["Game Over condition"],
+        GUID = CLASSIC_PROFILE_ID,
+        Paths = {
+            Rom = ext.Paths.ROGUEMON_CLASSIC_UNRAND_ROM,
             Jar = Options.FILES["Randomizer JAR"],
         }
     })
@@ -193,10 +243,60 @@ function self.setupRunProfile()
     if ascension > 0 then
         local settingsFile = self.getSettingsFilePath(ascension, typeIndex)
         Options.FILES["Settings File"] = settingsFile
-        profile.Paths.Settings = Options.FILES["Settings File"]
+        splitProfile.Paths.Settings = settingsFile
+        classicProfile.Paths.Settings = settingsFile
     end
 
-    QuickloadScreen.addUpdateProfile(profile, true)
+    QuickloadScreen.addUpdateProfile(splitProfile, not isClassic)
+    QuickloadScreen.addUpdateProfile(classicProfile, isClassic)
+
+    -- Restore BizHawk master sound after a mode switch or ROM patch.
+    -- Sound is disabled before client.openrom() and the full tracker restart
+    -- wipes Utils.wasSoundOn. The sound state is persisted to a flag file.
+    self.restoreSoundState()
+end
+
+function self.registerTrackerActions(actionManager)
+    if not actionManager or not actionManager.registerHandler then return end
+
+    actionManager.registerHandler(TRACKER_ACTION_SWITCH_PROFILE, function(arg)
+        local ext = Roguemon
+        local isCurrentlyClassic = ext.isClassicProfile()
+
+        -- Target the OTHER profile's active ROM
+        local targetRom = isCurrentlyClassic
+            and ext.Paths.ROGUEMON_ROM
+            or ext.Paths.ROGUEMON_CLASSIC_ROM
+
+        -- Persist sound state to a flag file before the full tracker restart
+        -- (Main.Run() wipes Utils.wasSoundOn; ROM stamping used the wrong
+        -- config address for the target ROM).
+        self.saveSoundState()
+
+        -- Mark a clean exit so the crash recovery screen doesn't trigger on the new ROM
+        CrashRecoveryScreen.logCrashReport(false)
+
+        -- Tear down extension state before loading the new ROM.
+        -- Core tracker functions were monkey-patched by overrideCoreTrackerFunctions()
+        -- and use RogueMon-specific GameSettings addresses (gSpeciesInfo, gMovesInfo,
+        -- etc.) that are only valid for the CURRENT ROM. If we don't restore them,
+        -- Main.Run() → FileManager.executeEachFile("initialize") calls the overridden
+        -- buildData/readMoveInfoFromMemory/etc. with stale addresses from the old ROM,
+        -- producing "attempted read outside memory size" warnings.
+        ext.OverrideManager.restoreCoreTrackerFunctions()
+        ext.UpdateManager.shutdown()
+        ext.WatchManager.unregisterCb2Watch()
+        ext.WatchManager.unregisterMapWatch()
+        ext.WatchManager.unregisterFieldWatch()
+        ext.WatchManager.unregisterPartyWatch()
+        ext.WatchManager.unregisterDma3DiagWatch()
+
+        -- Load the other ROM immediately (no savestate save/restore)
+        client.SetSoundOn(false)
+        client.openrom(targetRom)
+        diagBeforeMainRun("profile switch")
+        Main.Run()
+    end)
 end
 
 function self.getRomStamp()

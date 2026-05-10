@@ -43,12 +43,12 @@ function self.drawScreen()
     })
 
     if self.summaryCount == 0 then
-        Drawing.drawText(canvas.x + 10, 20, "No prize history yet.", Theme.COLORS["Default text"])
+        Drawing.drawText(canvas.x + 10, 20, "No run history yet.", Theme.COLORS["Default text"])
         self.option1 = ""
         self.option2 = ""
         self.option3 = ""
         if not suppressButtons then
-            Drawing.drawButton(self.Buttons.BackButton)
+            Drawing.drawButton(self.Buttons.Back)
             Drawing.drawButton(self.Buttons.PrizeInfoButton)
         end
         return
@@ -146,8 +146,8 @@ function self.drawScreen()
         )
 
         Drawing.drawText(canvas.x + 10, 69 + CONTENT_Y_OFFSET, self.wrapPixelsInline("Curse: " .. summaryItem.curse .. " @ " .. self.getCurseDescription(summaryItem.curse), canvas.w - 20), Theme.COLORS["Default text"])
-    elseif summaryItem.type == "Evolution" then
-        Roguemon.Screens.drawPrettyStats(canvas, summaryItem.prev, summaryItem.new, summaryItem.level)
+    elseif summaryItem.type == "Evolution" or summaryItem.type == "Chosen" then
+        Roguemon.Screens.drawPrettyStats(canvas, summaryItem)
     end
 
     if not suppressButtons then
@@ -156,10 +156,10 @@ function self.drawScreen()
         Drawing.drawButton(self.Buttons.LastButton)
         Drawing.drawButton(self.Buttons.FirstButton)
         Drawing.drawButton(self.Buttons.PrizeInfoButton)
-        Drawing.drawButton(self.Buttons.BackButton)
+        Drawing.drawButton(self.Buttons.Back)
     end
     if title then
-        Drawing.drawText(canvas.x + 6, 20, self.wrapPixelsInline(title, 100), Theme.COLORS["Default text"])
+        Drawing.drawText(canvas.x + 6, 20, self.wrapPixelsInline(title, canvas.w - 12), Theme.COLORS["Default text"])
     end
 end
 
@@ -168,7 +168,7 @@ local function closeScreen()
 end
 
 self.Buttons = {
-    BackButton = Drawing.createUIElementBackButton(closeScreen, "Default text"),
+    Back = Drawing.createUIElementBackButton(closeScreen, "Default text"),
     PrevButton = {
         type = Constants.ButtonTypes.FULL_BORDER,
         getText = function() return "<" end,

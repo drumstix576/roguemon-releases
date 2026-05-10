@@ -5,12 +5,14 @@ local self = {
     curseButtonKey = "RogueCurseCarousel",
     trainerCarouselOriginal = nil,
     hiddenCarouselOriginals = nil,
-    trackerDrawOriginal = nil,
     skullIcon = nil,
 }
 
 local FLAG_STARTED = 0x01
+local FLAG_A3_RIVAL_PENDING = 0x02
+local FLAG_A3_RIVAL_MERGED = 0x04
 local FLAG_OPTIONAL_ACTIVE = 0x08
+local FLAG_A3_RIVAL_FORWARD = 0x20
 
 local function getSegmentManager()
     return Roguemon.SegmentManager
@@ -73,25 +75,110 @@ function self.getSegmentStatusText()
 
     local seg = getSegmentDef(state.currentId)
     local segName = seg and seg.name or string.format("Segment %d", state.currentId or -1)
-    local started = ((state.flags or 0) & FLAG_STARTED) ~= 0
-    local optional = ((state.flags or 0) & FLAG_OPTIONAL_ACTIVE) ~= 0
+    local flags = state.flags or 0
+    local started = (flags & FLAG_STARTED) ~= 0
+    local optional = (flags & FLAG_OPTIONAL_ACTIVE) ~= 0
     local prefix = optional and "Optional " or ""
+
+    -- A3 rival display states
+    local isPending = (flags & FLAG_A3_RIVAL_PENDING) ~= 0
+    local isMerged = (flags & FLAG_A3_RIVAL_MERGED) ~= 0
+    local isForward = (flags & FLAG_A3_RIVAL_FORWARD) ~= 0
+
+    -- MERGED (not started): rival confirmed backward-combined, show lastCompleted + rival
+    if isMerged and not started then
+        local lastId = state.lastCompletedId
+        local lastSeg = lastId and lastId ~= 0xFF and getSegmentDef(lastId) or nil
+        if lastSeg then
+            local mc, mt, c, t = manager.countTrainerProgress(lastSeg)
+            -- Rival is confirmed combined; add +1 to totals
+            t = t + 1
+            mt = mt + 1
+            local rivalId = state.a3RivalId
+            local rivalSeg = rivalId and rivalId ~= 0xFF and getSegmentDef(rivalId) or nil
+            if rivalSeg then
+                local saveBlock1Addr = Utils.getSaveBlock1Addr()
+                for _, info in ipairs(rivalSeg.trainerInfo or {}) do
+                    if Program.hasDefeatedTrainer(info.id, saveBlock1Addr) then
+                        c = c + 1
+                        mc = mc + 1
+                        break
+                    end
+                end
+            end
+            local text = string.format("%s: %d/%d mandatory, %d/%d total", lastSeg.name, mc, mt, c, t)
+            if manager.isFullClearSegment and manager.isFullClearSegment(lastSeg) then
+                text = string.format("%s [FC Prize]", text)
+            end
+            return text
+        end
+    end
+
+    if isPending and not started then
+        -- PENDING: show last completed segment name + ambiguity indicator
+        local lastId = state.lastCompletedId
+        local lastSeg = lastId and lastId ~= 0xFF and getSegmentDef(lastId) or nil
+        local lastName = lastSeg and lastSeg.name or segName
+        local _, _, c, t = manager.countTrainerProgress(lastSeg or seg)
+        return string.format("%s (+ Rival?), %d/%d + 1?", lastName, c, t)
+    end
+
+    if isForward and not started then
+        -- FORWARD (not started): show combined label
+        return string.format("Next Segment: Rival + %s", segName)
+    end
 
     if not started then
         if segName == "Congratulations!" then
             return segName
         end
+        -- If an optional is queued but not yet active, show it as the next segment
+        if not optional and state.optionalCount and state.optionalCount > 0
+            and state.optionalQueue and state.optionalQueue[1] ~= nil then
+            local optSeg = getSegmentDef(state.optionalQueue[1])
+            if optSeg then
+                return string.format("Next Segment: Optional %s", optSeg.name)
+            end
+        end
         return string.format("Next Segment: %s%s", prefix, segName)
+    end
+
+    -- FORWARD or MERGED (started): show combined progress
+    if isForward or isMerged then
+        local mandatoryCompleted, mandatoryTotal, completed, total = manager.countTrainerProgress(seg)
+        local text = string.format(
+            "Rival + %s: %d/%d mandatory, %d/%d total",
+            segName,
+            mandatoryCompleted, mandatoryTotal,
+            completed, total
+        )
+        if seg and manager.isFullClearSegment and manager.isFullClearSegment(seg) then
+            text = string.format("%s [FC Prize]", text)
+        end
+        return text
     end
 
     local mandatoryCompleted, mandatoryTotal, completed, total = 0, 0, 0, 0
     mandatoryCompleted, mandatoryTotal, completed, total = manager.countTrainerProgress(seg)
 
+    -- Look-ahead: if next segment is a rival at A3+, show +1? in total
+    local nextIsA3Rival = false
+    if GameSettings.roguemonAscension and GameSettings.roguemonAscension >= 3 then
+        local nextId = manager.SegmentOrder[(state.currentIndex or 0) + 2]
+        local nextSeg = nextId and getSegmentDef(nextId) or nil
+        if nextSeg and nextSeg.type == 2 then
+            nextIsA3Rival = true
+        end
+    end
+
+    local totalStr = nextIsA3Rival
+        and string.format("%d/%d + Rival?", completed, total)
+        or string.format("%d/%d total", completed, total)
     local text = string.format(
-        "%s%s: %d/%d mandatory, %d/%d total",
+        "%s%s: %d/%d mandatory, %s",
         prefix, segName,
         mandatoryCompleted, mandatoryTotal,
-        completed, total
+        totalStr
     )
     if seg and manager.isFullClearSegment and manager.isFullClearSegment(seg) then
         text = string.format("%s [FC Prize]", text)
@@ -150,17 +237,27 @@ function self.restoreTrainerCarousel()
     self.trainerCarouselOriginal = nil
 end
 
-local function drawSegmentCarouselBottom(button, shadowcolor)
-    local gachaOn = Options["Show GachaMon stars on main Tracker Screen"]
-    local bgColor = Theme.COLORS["Lower box background"]
-    local manager = getSegmentManager()
-    local state = getSegmentState()
-    local seg = state and getSegmentDef(state.currentId) or nil
-    local started = ((state and state.flags or 0) & FLAG_STARTED) ~= 0
-    if started and seg and manager and manager.isFullClearSegment and manager.isFullClearSegment(seg) then
-        bgColor = 0xFF008F00
-    end
+local function drawCarouselItemCount(shadowcolor)
+    gui.drawLine(Constants.SCREEN.WIDTH + 122, 136, Constants.SCREEN.WIDTH + 122, 155, Theme.COLORS["Lower box border"])
+    local colorList = TrackerScreen.PokeBalls.ColorList
+    Drawing.drawImageAsPixels(Constants.PixelImages.POKEBALL_SMALL, Constants.SCREEN.WIDTH + 124, Constants.SCREEN.MARGIN + 132, colorList, _G.PixelFont and false)
+    local itemCt = self.getItemsInCurrentSegment()
+    Drawing.drawText(Constants.SCREEN.WIDTH + 122 + ((itemCt >= 10) and 0 or 3), Constants.SCREEN.MARGIN + 140, itemCt, Theme.COLORS["Lower box text"], shadowcolor)
+end
 
+local function drawCarouselWrappedText(button, shadowcolor, pixelLimit, alternate)
+    local btnText = button:getCustomText()
+    local wrappedText = wrapText(btnText, pixelLimit, 2, alternate)
+    if not string.find(wrappedText, "%\n") then
+        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1, 140, wrappedText, Theme.COLORS["Lower box text"], shadowcolor)
+    else
+        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1, 136, wrappedText, Theme.COLORS["Lower box text"], shadowcolor)
+        gui.drawLine(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 155, Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN, 155, Theme.COLORS["Lower box border"])
+        gui.drawLine(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 156, Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN, 156, Theme.COLORS["Main background"])
+    end
+end
+
+local function drawCarouselBackground(bgColor)
     gui.drawRectangle(
         Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN,
         136,
@@ -169,27 +266,51 @@ local function drawSegmentCarouselBottom(button, shadowcolor)
         Theme.COLORS["Lower box border"],
         bgColor
     )
-    if gachaOn then
-        gui.drawLine(Constants.SCREEN.WIDTH + 134, 136, Constants.SCREEN.WIDTH + 134, 155, Theme.COLORS["Lower box border"])
+    gui.drawLine(Constants.SCREEN.WIDTH + 134, 136, Constants.SCREEN.WIDTH + 134, 155, Theme.COLORS["Lower box border"])
+end
+
+local function getSegmentCarouselBgColor()
+    local manager = getSegmentManager()
+    local state = getSegmentState()
+    local seg = state and getSegmentDef(state.currentId) or nil
+    local started = ((state and state.flags or 0) & FLAG_STARTED) ~= 0
+    if started and seg and manager and manager.isFullClearSegment and manager.isFullClearSegment(seg) then
+        return 0xFF008F00
     end
+    if not started and state and state.currentId then
+        local cm = Roguemon.CurseManager
+        if cm and cm.getCurseForSegment(state.currentId) and not cm.isWardedSegment(state.currentId) then
+            return 0xFF510080
+        end
+    end
+    return Theme.COLORS["Lower box background"]
+end
 
-    -- Item count section
-    gui.drawLine(Constants.SCREEN.WIDTH + (gachaOn and 122 or 134), 136, Constants.SCREEN.WIDTH + (gachaOn and 122 or 134), 155, Theme.COLORS["Lower box border"])
-    local colorList = TrackerScreen.PokeBalls.ColorList
-    Drawing.drawImageAsPixels(Constants.PixelImages.POKEBALL_SMALL, Constants.SCREEN.WIDTH + (gachaOn and 124 or 136), Constants.SCREEN.MARGIN + 132, colorList)
-    local itemCt = self.getItemsInCurrentSegment()
-    Drawing.drawText(Constants.SCREEN.WIDTH + (gachaOn and 122 or 133) + ((itemCt >= 10) and 0 or 3), Constants.SCREEN.MARGIN + 140, itemCt, Theme.COLORS["Lower box text"])
+-- Live BG color of whichever carousel is currently rendering. Used by
+-- drawCapsAndMenus so the menu buttons (!, skull) get a shadowcolor that
+-- matches the visible panel — without this, a cached value goes stale
+-- when the carousel cycles away from the segment view, leaving e.g. a
+-- green-derived shadow on a now-default-gray panel.
+function self.getCurrentCarouselBgColor()
+    if TrackerScreen.carouselIndex == self.SEGMENT_CAROUSEL_INDEX then
+        return getSegmentCarouselBgColor()
+    end
+    if TrackerScreen.carouselIndex == self.CURSE_CAROUSEL_INDEX then
+        return 0xFF510080
+    end
+    return Theme.COLORS["Lower box background"]
+end
 
-    -- Wrapped text
+local function drawSegmentCarouselBottom(button, shadowcolor)
+    local bgColor = getSegmentCarouselBgColor()
+    drawCarouselBackground(bgColor)
+    -- Re-derive shadowcolor from the actual painted bgColor so PixelFont's
+    -- shadow tone tracks the green/purple panel instead of the theme's
+    -- default lower-box BG that the caller assumed.
+    local panelShadow = Utils.calcShadowColor(bgColor)
+    drawCarouselItemCount(panelShadow)
     local btnText = button:getCustomText()
-    local wrappedText = wrapText(btnText, gachaOn and 113 or 125, 2, Utils.replaceText(btnText, "mandatory", "mand."))
-    if not string.find(wrappedText, "%\n") then
-        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1, 140, wrappedText, Theme.COLORS["Lower box text"], shadowcolor)
-    else
-        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1, 136, wrappedText, Theme.COLORS["Lower box text"], shadowcolor)
-        gui.drawLine(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 155, Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN, 155, Theme.COLORS["Lower box border"])
-        gui.drawLine(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 156, Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN, 156, Theme.COLORS["Main background"])
-    end
+    drawCarouselWrappedText(button, panelShadow, 113, Utils.replaceText(btnText, "mandatory", "mand."))
 end
 
 local berryPouchItemId = nil
@@ -251,46 +372,53 @@ local function getLeadMaxHp()
     return 0
 end
 
-local function getDrinkHealsForCap()
+--- Count HP heal value and count from an item map, applying Cooler Bag exclusion.
+--- @param hpHeals table {[itemId] = quantity}
+--- @return number healValue, number healCount
+function self.countHealInfoFrom(hpHeals)
+    local maxHp = getLeadMaxHp()
     local totalValue = 0
     local totalCount = 0
-    local drinkIds = getDrinkItemIds()
-    if not drinkIds then
-        return totalValue, totalCount
+    local coolerBagActive = false
+    local bagId = getCoolerBagItemId()
+    if bagId then
+        coolerBagActive = Roguemon.ItemManager.hasRoguemonItem(bagId, 1)
     end
-    local maxHp = getLeadMaxHp()
-    for itemId, quantity in pairs(Program.GameData.Items.HPHeals) do
-        if drinkIds[itemId] and quantity and quantity > 0 then
-            local healItemData = MiscData.HealingItems[itemId]
+    local drinkIds = coolerBagActive and getDrinkItemIds() or nil
+
+    for itemId, quantity in pairs(hpHeals) do
+        if type(itemId) == "number" and quantity and quantity > 0 and quantity <= 999 then
+            local healItemData = MiscData.HealingItems and MiscData.HealingItems[itemId]
             if healItemData then
-                local value = 0
-                if healItemData.type == MiscData.HealingType.Constant then
-                    local amount = healItemData.amount or 0
+                if not (drinkIds and drinkIds[itemId]) then
+                    local value = 0
                     if maxHp > 0 then
-                        amount = math.min(amount, maxHp)
+                        if healItemData.type == MiscData.HealingType.Constant then
+                            value = math.min(healItemData.amount or 0, maxHp) * quantity
+                        elseif healItemData.type == MiscData.HealingType.Percentage then
+                            value = math.floor((healItemData.amount or 0) * maxHp * quantity / 100 + 0.5)
+                        end
                     end
-                    value = amount * quantity
-                elseif healItemData.type == MiscData.HealingType.Percentage then
-                    if maxHp > 0 then
-                        value = math.floor((healItemData.amount or 0) * maxHp * quantity / 100 + 0.5)
-                    end
+                    totalValue = totalValue + value
+                    totalCount = totalCount + quantity
                 end
-                totalValue = totalValue + value
-                totalCount = totalCount + quantity
             end
         end
     end
     return totalValue, totalCount
 end
 
-local function countStatusHeals()
+--- Count status heals from an item map, applying Berry Pouch exclusion.
+--- @param statusHeals table {[itemId] = quantity}
+--- @return number total count
+function self.countStatusHealsFrom(statusHeals)
     local total = 0
     local berryPouchActive = false
     local pouchId = getBerryPouchItemId()
     if pouchId then
         berryPouchActive = Roguemon.ItemManager.hasRoguemonItem(pouchId, 1)
     end
-    for itemId, quantity in pairs(Program.GameData.Items.StatusHeals) do
+    for itemId, quantity in pairs(statusHeals) do
         if type(itemId) == "number" and quantity and quantity > 0 then
             if MiscData and MiscData.StatusItems and MiscData.StatusItems[itemId] then
                 if berryPouchActive and MiscData.StatusItems[itemId].pocket == (MiscData.BagPocket and MiscData.BagPocket.Berries) then
@@ -304,39 +432,56 @@ local function countStatusHeals()
     return total
 end
 
+--- Read ROM-computed cap usage values from the TrackerDataManager cache.
+--- Returns table with hpHealValue, hpHealCount, statusHealCount, hpCap, statusCap
+--- or nil if unavailable (cache not initialized).
+function self.readCapUsageFromRom()
+    local td = Roguemon.TrackerDataManager and Roguemon.TrackerDataManager.State or nil
+    if not td or td.currentHpCap == nil then
+        return nil
+    end
+    return {
+        hpHealValue = td.hpHealValue or 0,
+        hpHealCount = td.hpHealCount or 0,
+        statusHealCount = td.statusHealCount or 0,
+        hpCap = td.currentHpCap or 0,
+        statusCap = td.currentStatusCap or 0,
+    }
+end
+
 --- Compute HP and status cap display strings with color.
 --- Returns hpText, hpColor, statusText, statusColor.
 function self.getCapsDisplayInfo()
-    local data = DataHelper.buildTrackerScreenDisplay()
+    local rom = self.readCapUsageFromRom()
+    if rom then
+        local hpColor = rom.hpHealValue > rom.hpCap and Theme.COLORS["Negative text"] or Theme.COLORS["Default text"]
+        local hpText = string.format("%.0f/%.0f %s (%s)", rom.hpHealValue, rom.hpCap, Resources.TrackerScreen.HPAbbreviation, rom.hpHealCount)
+
+        local statusColor = rom.statusHealCount > rom.statusCap and Theme.COLORS["Negative text"] or Theme.COLORS["Default text"]
+        local statusText = string.format("%.0f/%.0f %s", rom.statusHealCount, rom.statusCap, "Status")
+
+        return hpText, hpColor, statusText, statusColor
+    end
+
+    -- Fallback: compute locally if ROM values unavailable
     local hpCap, statusCap = Roguemon.SegmentManager.getCurrentCaps()
 
-    local healValue = data and data.x and data.x.healvalue or 0
-    local healNum = data and data.x and data.x.healnum or 0
-    local coolerBagActive = false
-    local bagId = getCoolerBagItemId()
-    if bagId then
-        coolerBagActive = Roguemon.ItemManager.hasRoguemonItem(bagId, 1)
-    end
-    if coolerBagActive then
-        local drinkValue, drinkCount = getDrinkHealsForCap()
-        healValue = math.max(0, healValue - drinkValue)
-        healNum = math.max(0, healNum - drinkCount)
-    end
+    local healValue, healNum = self.countHealInfoFrom(Program.GameData.Items.HPHeals or {})
     local hpColor = healValue > hpCap and Theme.COLORS["Negative text"] or Theme.COLORS["Default text"]
     local hpText = string.format("%.0f/%.0f %s (%s)", healValue, hpCap, Resources.TrackerScreen.HPAbbreviation, healNum)
 
-    local statusVal = countStatusHeals()
+    local statusVal = self.countStatusHealsFrom(Program.GameData.Items.StatusHeals or {})
     local statusColor = statusVal > statusCap and Theme.COLORS["Negative text"] or Theme.COLORS["Default text"]
     local statusText = string.format("%.0f/%.0f %s", statusVal, statusCap, "Status")
 
     return hpText, hpColor, statusText, statusColor
 end
 
-local function applyMenuLayout(buttons, gachaLayout)
+local function applyMenuLayout(buttons, carouselLayout)
     if not buttons then
         return
     end
-    if gachaLayout then
+    if carouselLayout then
         buttons.RoguePrizeMenuButton.box = { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 14, Constants.SCREEN.MARGIN + 130, 10, 10 }
         buttons.CurseMenuButton.box = { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 14, Constants.SCREEN.MARGIN + 140, 10, 10 }
         buttons.RoguePrizeMenuButton.type = Constants.ButtonTypes.NO_BORDER
@@ -357,13 +502,12 @@ local function drawCapsAndMenus()
         return
     end
 
-    local gachaOn = Options["Show GachaMon stars on main Tracker Screen"]
     local showCaps = not (Battle and Battle.isViewingOwn == false)
     if showCaps then
         gui.drawRectangle(
             Constants.SCREEN.WIDTH + 6,
             58,
-            gachaOn and 54 or 94,
+            94,
             21,
             Theme.COLORS["Upper box background"],
             Theme.COLORS["Upper box background"]
@@ -373,23 +517,35 @@ local function drawCapsAndMenus()
         local hpText, hpColor, statusText, statusColor = self.getCapsDisplayInfo()
         Drawing.drawText(Constants.SCREEN.WIDTH + 6, 57, hpText, hpColor, shadowcolor)
         Drawing.drawText(Constants.SCREEN.WIDTH + 6, 68, statusText, statusColor, shadowcolor)
+
+        -- Redraw GachaMon stars on top since the wider background covers them
+        local starsBtn = TrackerScreen.Buttons.GachaMonStars
+        if starsBtn and (not starsBtn.isVisible or starsBtn:isVisible()) then
+            Drawing.drawButton(starsBtn, shadowcolor)
+        end
     end
 
-    applyMenuLayout(TrackerScreen.Buttons, gachaOn)
+    applyMenuLayout(TrackerScreen.Buttons, true)
     if BattleDetailsScreen and BattleDetailsScreen.Buttons then
         applyMenuLayout(BattleDetailsScreen.Buttons, false)
     end
 
+    -- Menu buttons (!, skull) sit over the carousel's painted bgColor;
+    -- compute the shadowcolor fresh from whichever carousel is currently
+    -- rendering so PixelFont's shadow tone tracks the visible panel.
+    -- Computing per-frame avoids stale values when the carousel cycles
+    -- away from FC-prize green or curse purple back to the default panel.
+    local panelShadow = Utils.calcShadowColor(self.getCurrentCarouselBgColor())
     local menuBtn = TrackerScreen.Buttons.RoguePrizeMenuButton
     if menuBtn and (not menuBtn.isVisible or menuBtn:isVisible()) then
         local queueCount = getPrizeQueueCount()
-        local shopPending = Roguemon.BuyPhaseManager.isShopPending()
-        if queueCount > 0 or shopPending then
+        local checklistPending = Roguemon.BuyPhaseManager.isChecklistPending()
+        if queueCount > 0 or checklistPending then
             menuBtn.textColor = "Negative text"
         else
             menuBtn.textColor = "Intermediate text"
         end
-        Drawing.drawButton(menuBtn)
+        Drawing.drawButton(menuBtn, panelShadow)
     end
     local curseBtn = TrackerScreen.Buttons.CurseMenuButton
     if curseBtn and (not curseBtn.isVisible or curseBtn:isVisible()) then
@@ -397,8 +553,12 @@ local function drawCapsAndMenus()
         if curseBtn.getIconColors then
             curseBtn.iconColors = curseBtn.getIconColors()
         end
-        Drawing.drawButton(curseBtn)
+        Drawing.drawButton(curseBtn, panelShadow)
     end
+    -- DebugButton sits in the header strip (y=81), not over the carousel
+    -- panel, so its shadow shouldn't inherit the carousel's bg-derived
+    -- shadowcolor. Pass nil so PixelFont mixes against its FG-derived
+    -- default (which matches the dark header BG correctly).
     local debugBtn = TrackerScreen.Buttons.DebugButton
     if debugBtn and (not debugBtn.isVisible or debugBtn:isVisible()) then
         Drawing.drawButton(debugBtn)
@@ -420,6 +580,23 @@ function self.hideCoreCarousels()
         if item then
             self.hiddenCarouselOriginals[idx] = item.canShow
             item.canShow = function() return false end
+        end
+    end
+
+    -- Hide ROUTE_INFO ("Seen Pokemon") once the player is past the pivot
+    -- (Viridian Forest segment or later). At that point the R shortcut opens
+    -- TrainersOnRouteScreen instead, so the carousel should stay on Segment/Curse.
+    local routeIdx = TrackerScreen.CarouselTypes.ROUTE_INFO
+    local routeItem = TrackerScreen.CarouselItems[routeIdx]
+    if routeItem then
+        local originalCanShow = routeItem.canShow
+        self.hiddenCarouselOriginals[routeIdx] = originalCanShow
+        routeItem.canShow = function(this)
+            local manager = Roguemon.SegmentManager
+            if manager and manager.isPastPivot and manager.isPastPivot() then
+                return false
+            end
+            return originalCanShow(this)
         end
     end
 end
@@ -449,27 +626,28 @@ function self.register()
         if Program.currentScreen ~= screen then
             return false
         end
-        if screen == TrackerScreen and Options["Show GachaMon stars on main Tracker Screen"] then
+        if screen == TrackerScreen then
             -- Show menus on segment or curse carousel
             return TrackerScreen.carouselIndex == self.SEGMENT_CAROUSEL_INDEX
                 or TrackerScreen.carouselIndex == self.CURSE_CAROUSEL_INDEX
         end
-        return true
+        return screen ~= BattleDetailsScreen
     end
 
     TrackerScreen.Buttons.RoguePrizeMenuButton = {
         type = Constants.ButtonTypes.NO_BORDER,
         getText = function() return "!" end,
-        box = (Options["Show GachaMon stars on main Tracker Screen"] and
-            { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 14, Constants.SCREEN.MARGIN + 130, 10, 10 } or
-            { Constants.SCREEN.WIDTH + 90, 59, 6, 6 }),
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 14, Constants.SCREEN.MARGIN + 130, 10, 10 },
         onClick = function()
-            if getPrizeQueueCount() > 0 then
-                Roguemon.PrizeManager.openQueueScreen()
+            -- Checklist takes priority over prize queue to avoid pre-emption.
+            -- isChecklistPending reads from TrackerDataManager's watch-driven
+            -- cache, not raw ROM.
+            if Roguemon.BuyPhaseManager.isChecklistPending() then
+                Roguemon.Screens.ChecklistScreen.show()
                 return
             end
-            if Roguemon.BuyPhaseManager.isShopPending() then
-                Roguemon.BuyPhaseManager.openShopScreen()
+            if getPrizeQueueCount() > 0 then
+                Roguemon.PrizeManager.openQueueScreen()
                 return
             end
             Roguemon.ScreenManager.currentScreen = Roguemon.Screens.RunSummaryScreen
@@ -483,13 +661,19 @@ function self.register()
 
     TrackerScreen.Buttons.DebugButton = {
         type = Constants.ButtonTypes.NO_BORDER,
-        getText = function() return "!" end,
+        getText = function()
+            if GameSettings.roguemonVersionStr == "dev" then return "!" end
+            return ""
+        end,
         box = { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 10, Constants.SCREEN.MARGIN + 76, 10, 10 },
         onClick = function()
             Roguemon.DevTools.Run.show()
         end,
         textColor = Drawing.Colors.GREEN,
-        isVisible = function() return true end,
+        isVisible = function()
+            local v = GameSettings.roguemonVersionStr or ""
+            return v == "dev" or v:find("alpha") ~= nil
+        end,
     }
 
     if not self.skullIcon then
@@ -513,9 +697,7 @@ function self.register()
     TrackerScreen.Buttons.CurseMenuButton = {
         type = Constants.ButtonTypes.PIXELIMAGE,
         image = self.skullIcon,
-        box = Options["Show GachaMon stars on main Tracker Screen"] and
-            { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 14, Constants.SCREEN.MARGIN + 140, 10, 10 } or
-            { Constants.SCREEN.WIDTH + 80, 59, 7, 12 },
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - 14, Constants.SCREEN.MARGIN + 140, 10, 10 },
         onClick = function()
             if Roguemon.Screens.CurseOverviewScreen then
                 Roguemon.ScreenManager.currentScreen = Roguemon.Screens.CurseOverviewScreen
@@ -566,23 +748,27 @@ function self.register()
         }
     end
 
-    if TrackerScreen.drawScreen and not self.trackerDrawOriginal then
-        self.trackerDrawOriginal = TrackerScreen.drawScreen
-        TrackerScreen.drawScreen = function()
-            self.trackerDrawOriginal()
+    if TrackerScreen.drawScreen then
+        local pristineTrackerDraw = Roguemon.pristineOriginal(
+            "TrackerScreen.drawScreen", TrackerScreen.drawScreen
+        )
+        TrackerScreen.drawScreen = Roguemon.tagWrapper(function()
+            pristineTrackerDraw()
             drawCapsAndMenus()
-        end
+        end, "TrackerScreen.drawScreen", pristineTrackerDraw)
     end
 
-    if BattleDetailsScreen and BattleDetailsScreen.drawScreen and not self.battleDrawOriginal then
-        self.battleDrawOriginal = BattleDetailsScreen.drawScreen
-        BattleDetailsScreen.drawScreen = function()
+    if BattleDetailsScreen and BattleDetailsScreen.drawScreen then
+        local pristineBattleDraw = Roguemon.pristineOriginal(
+            "BattleDetailsScreen.drawScreen", BattleDetailsScreen.drawScreen
+        )
+        BattleDetailsScreen.drawScreen = Roguemon.tagWrapper(function()
             if BattleDetailsScreen and BattleDetailsScreen.Buttons then
                 local queueCount = getPrizeQueueCount()
-                local shopPending = Roguemon.BuyPhaseManager.isShopPending()
+                local checklistPending = Roguemon.BuyPhaseManager.isChecklistPending()
                 local menuBtn = BattleDetailsScreen.Buttons.RoguePrizeMenuButton
                 if menuBtn then
-                    if queueCount > 0 or shopPending then
+                    if queueCount > 0 or checklistPending then
                         menuBtn.textColor = "Negative text"
                     else
                         menuBtn.textColor = "Intermediate text"
@@ -590,8 +776,8 @@ function self.register()
                 end
                 applyMenuLayout(BattleDetailsScreen.Buttons, false)
             end
-            self.battleDrawOriginal()
-        end
+            pristineBattleDraw()
+        end, "BattleDetailsScreen.drawScreen", pristineBattleDraw)
     end
 
     TrackerScreen.Buttons[self.buttonKey] = {
@@ -600,7 +786,12 @@ function self.register()
         textColor = "Lower box text",
         box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 136, 129, 18 },
         isVisible = function() return TrackerScreen.carouselIndex == self.SEGMENT_CAROUSEL_INDEX end,
-        onClick = function(_) end,
+        onClick = function(_)
+            if Roguemon.Screens.SegmentProgressScreen then
+                Roguemon.ScreenManager.currentScreen = Roguemon.Screens.SegmentProgressScreen
+                Program.changeScreenView(Roguemon.Screens.SegmentProgressScreen)
+            end
+        end,
         draw = function(this, shadowcolor)
             drawSegmentCarouselBottom(this, shadowcolor)
         end,
@@ -622,32 +813,11 @@ function self.register()
             end
         end,
         draw = function(this, shadowcolor)
-            -- Draw similar to segment carousel but with purple background when cursed
-            local gachaOn = Options["Show GachaMon stars on main Tracker Screen"]
-            local bgColor = 0xFF510080  -- Purple for curse
-
-            gui.drawRectangle(
-                Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN,
-                136,
-                Constants.SCREEN.RIGHT_GAP - (2 * Constants.SCREEN.MARGIN),
-                19,
-                Theme.COLORS["Lower box border"],
-                bgColor
-            )
-            if gachaOn then
-                gui.drawLine(Constants.SCREEN.WIDTH + 134, 136, Constants.SCREEN.WIDTH + 134, 155, Theme.COLORS["Lower box border"])
-            end
-
-            -- Wrapped text
-            local btnText = this:getCustomText()
-            local wrappedText = wrapText(btnText, gachaOn and 125 or 137, 2)
-            if not string.find(wrappedText, "%\n") then
-                Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1, 140, wrappedText, Theme.COLORS["Lower box text"], shadowcolor)
-            else
-                Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1, 136, wrappedText, Theme.COLORS["Lower box text"], shadowcolor)
-                gui.drawLine(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 155, Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN, 155, Theme.COLORS["Lower box border"])
-                gui.drawLine(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, 156, Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN, 156, Theme.COLORS["Main background"])
-            end
+            local bgColor = 0xFF510080
+            drawCarouselBackground(bgColor)
+            local panelShadow = Utils.calcShadowColor(bgColor)
+            drawCarouselItemCount(panelShadow)
+            drawCarouselWrappedText(this, panelShadow, 113)
         end,
         boxColors = { "Default text" },
     }

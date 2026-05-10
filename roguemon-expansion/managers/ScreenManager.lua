@@ -1,10 +1,11 @@
 local self = {
-    curseInfo = Roguemon.Curses.curseInfo,
     Screens = Roguemon.Screens,
     Paths = Roguemon.Paths,
     currentScreen = nil,
     screenQueue = {},
     previousScreen = nil,
+    notificationQueue = {},
+    activeNotification = nil,
     Constants = {
         TOP_LEFT_X = 2,
         IMAGE_WIDTH = 25,
@@ -56,10 +57,7 @@ function self.setCurrentRoguemonScreen(newScreen)
 end
 
 function self.returnToHomeScreen()
-    local current = Program.currentScreen
-    if current and current.clearScreen then
-        pcall(current.clearScreen)
-    end
+    Drawing.drawBackgroundAndMargins()
     if #self.screenQueue > 0  and self.currentScreen == self.Screens.RunSummaryScreen then
         local s = table.remove(self.screenQueue, 1)
         self.previousScreen = Program.currentScreen
@@ -81,10 +79,7 @@ end
 function self.returnToPreviousScreen()
     local prev = self.previousScreen
     self.previousScreen = nil
-    local current = Program.currentScreen
-    if current and current.clearScreen then
-        pcall(current.clearScreen)
-    end
+    Drawing.drawBackgroundAndMargins()
     if prev and prev ~= self.Screens.RewardScreen then
         Program.changeScreenView(prev)
     else
@@ -92,28 +87,126 @@ function self.returnToPreviousScreen()
     end
 end
 
-function self.displayNotification(message, image, dismissFunction, onClose, actionButton)
-    self.Screens.NotificationScreen.message = message
-    self.Screens.NotificationScreen.image = image and (self.Paths.IMAGES_DIRECTORY .. image) or nil
-    self.Screens.NotificationScreen.onClose = onClose
-    self.Screens.NotificationScreen.actionButton = actionButton
-    if Program.currentScreen == self.Screens.PrettyStatScreen or Program.currentScreen == self.Screens.OptionSelectionScreen then
-        self.readyScreen(self.Screens.NotificationScreen)
-    else
-        Program.changeScreenView(self.Screens.NotificationScreen)
+function self.isNotificationActive()
+    if not self.activeNotification then
+        return false
     end
-    Program.redraw(true)
-    shouldDismissNotification = dismissFunction
+    local t = self.activeNotification.type
+    if t == "notification" then
+        return Program.currentScreen == self.Screens.NotificationScreen
+    elseif t == "itemInfo" then
+        return Program.currentScreen == InfoScreen
+            and InfoScreen.viewScreen == InfoScreen.Screens.ITEM_INFO
+    elseif t == "curseInfo" then
+        return Program.currentScreen == InfoScreen
+            and InfoScreen.viewScreen == InfoScreen.Screens.CURSE_INFO
+    elseif t == "moveInfo" then
+        return Program.currentScreen == InfoScreen
+            and InfoScreen.viewScreen == InfoScreen.Screens.MOVE_INFO
+    end
+    return false
+end
+
+function self.showNotificationEntry(entry)
+    self.activeNotification = entry
+    if entry.type == "notification" then
+        self.Screens.NotificationScreen.message = entry.message
+        self.Screens.NotificationScreen.image = entry.image
+        self.Screens.NotificationScreen.onClose = entry.onClose
+        self.Screens.NotificationScreen.actionButton = entry.actionButton
+        Program.changeScreenView(self.Screens.NotificationScreen)
+        Program.redraw(true)
+    elseif entry.type == "itemInfo" then
+        InfoScreen.changeScreenView(InfoScreen.Screens.ITEM_INFO, entry.itemId)
+    elseif entry.type == "curseInfo" then
+        InfoScreen.changeScreenView(InfoScreen.Screens.CURSE_INFO, entry.curseId)
+    elseif entry.type == "moveInfo" then
+        InfoScreen.changeScreenView(InfoScreen.Screens.MOVE_INFO, entry.moveId)
+    end
+end
+
+function self.enqueueNotification(entry)
+    if self.isNotificationActive() then
+        self.notificationQueue[#self.notificationQueue + 1] = entry
+        return
+    end
+    -- Defer notification-type entries when PrettyStatScreen or RoguemonOptionsScreen is active.
+    -- Use rawget to avoid triggering the lazy-load __index metatable on Roguemon.Screens;
+    -- if a screen hasn't been loaded yet, it can't be the current screen.
+    if entry.type == "notification" then
+        if Program.currentScreen == rawget(self.Screens, "PrettyStatScreen") or Program.currentScreen == rawget(self.Screens, "RoguemonOptionsScreen") then
+            self.notificationQueue[#self.notificationQueue + 1] = entry
+            self.readyScreen(self.Screens.NotificationScreen)
+            return
+        end
+    end
+    self.showNotificationEntry(entry)
+end
+
+function self.closeActiveNotification()
+    self.activeNotification = nil
+    while #self.notificationQueue > 0 do
+        local next = table.remove(self.notificationQueue, 1)
+        if not next.shouldShow or next.shouldShow() then
+            self.showNotificationEntry(next)
+            return true
+        end
+    end
+    -- Check prize queue
+    local prizeManager = Roguemon.PrizeManager
+    if prizeManager and prizeManager.readPrizeState then
+        local state = prizeManager.readPrizeState()
+        if state and (state.queueCount or 0) > 0 and prizeManager.openQueueScreen then
+            prizeManager.openQueueScreen()
+            -- Don't let Back navigate to the just-closed notification
+            if self.previousScreen == rawget(self.Screens, "NotificationScreen") then
+                self.previousScreen = TrackerScreen
+            end
+            return true
+        end
+    end
+    return false
+end
+
+function self.showItemInfo(itemId)
+    self.enqueueNotification({ type = "itemInfo", itemId = itemId })
+end
+
+function self.showCurseInfo(curseId)
+    self.enqueueNotification({ type = "curseInfo", curseId = curseId })
+end
+
+function self.showMoveInfo(moveId)
+    self.enqueueNotification({ type = "moveInfo", moveId = moveId })
+end
+
+function self.displayNotification(message, image, dismissFunction, onClose, actionButton, shouldShow)
+    local entry = {
+        type = "notification",
+        message = message,
+        image = image and (self.Paths.IMAGES_DIRECTORY .. image) or nil,
+        onClose = onClose,
+        actionButton = actionButton,
+        shouldShow = shouldShow,
+    }
+    self.enqueueNotification(entry)
 end
 
 function self.showPrettyStatScreen(oldmon, newmon)
     self.Screens.PrettyStatScreen.oldPoke = oldmon
     self.Screens.PrettyStatScreen.newPoke = newmon
-    table.insert(self.screenQueue, 1, self.Screens.PrettyStatScreen)
+    Program.changeScreenView(self.Screens.PrettyStatScreen)
+    Program.redraw(true)
 end
 
-function self.getCurseDescription(curse)
-    return self.curseInfo[curse].longDescription or self.curseInfo[curse].description
+function self.getCurseDescription(curseName)
+    local CurseManager = Roguemon and Roguemon.CurseManager
+    if not CurseManager then return "" end
+    local def = CurseManager.CurseDefsByName and CurseManager.CurseDefsByName[curseName]
+    if def and def.description and def.description ~= "" then
+        return def.description
+    end
+    return ""
 end
 
 function self.wrapPixelsInline(input, limit, lineLimit, alternate)

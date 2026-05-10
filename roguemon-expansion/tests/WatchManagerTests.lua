@@ -23,7 +23,7 @@ local function withRestores(fn)
 end
 
 local function testCb2Watch()
-    -- Utils.printDebug(">> Testing CB2 watch")
+    -- Utils.printDebug("[TEST] Testing CB2 watch")
     withRestores(function(stubGlobal, stubField)
         local watch = Roguemon.WatchManager
         local captured = {}
@@ -67,7 +67,7 @@ local function testCb2Watch()
 end
 
 local function testFieldWatchRandomize()
-    -- Utils.printDebug(">> Testing field watch")
+    -- Utils.printDebug("[TEST] Testing field watch")
     withRestores(function(stubGlobal, stubField)
         local watch = Roguemon.WatchManager
         local calls = {
@@ -118,7 +118,7 @@ local function testFieldWatchRandomize()
 end
 
 local function testPartyWatch()
-    -- Utils.printDebug(">> Testing party watch")
+    -- Utils.printDebug("[TEST] Testing party watch")
     withRestores(function(stubGlobal, stubField)
         local watch = Roguemon.WatchManager
         local captured = {}
@@ -154,7 +154,7 @@ local function testPartyWatch()
 end
 
 function WatchManagerTests.run()
-    Utils.printDebug("> Running WatchManager tests")
+    Utils.printDebug("[TEST] Running WatchManager tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -174,7 +174,7 @@ function WatchManagerTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] WatchManager tests completed with failures (see above)")
     else
-        Utils.printDebug("> WatchManager tests passed")
+        Utils.printDebug("[TEST] WatchManager tests passed")
     end
 end
 

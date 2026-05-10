@@ -364,17 +364,17 @@ end
 function self.dumpPocket(pocketId)
     local entries = self.readPocket(pocketId, false)
     if not entries then
-        Utils.printDebug("[ITEM] Pocket %d unavailable", pocketId or -1)
+        Utils.printDebug("[Item] Pocket %d unavailable", pocketId or -1)
         return
     end
     if #entries == 0 then
-        Utils.printDebug("[ITEM] Pocket %d is empty", pocketId)
+        Utils.printDebug("[Item] Pocket %d is empty", pocketId)
         return
     end
-    Utils.printDebug("[ITEM] Pocket %d contents:", pocketId)
+    Utils.printDebug("[Item] Pocket %d contents:", pocketId)
     for _, entry in ipairs(entries) do
         local name = self.getItemName(entry.id)
-        Utils.printDebug(">> %s x%d", name, entry.quantity or 0)
+        Utils.printDebug("[Item]   %s x%d", name, entry.quantity or 0)
     end
 end
 
@@ -430,12 +430,12 @@ function self.isRoguemonItem(itemId)
     return self.getItemPocket(itemId) == self.Pocket.Roguemon
 end
 
--- Poll Roguemon pocket for changes (called from UpdateManager every 30 frames)
+-- Poll Roguemon pocket for changes (debug utility, not called from update loop)
+-- Item changes are detected via TrackerActionManager watches in normal operation.
 function self.pollPocket()
     if not self.logEnabled then
         return
     end
-    -- ROGUEMON-TODO: Add reminder notifications for over-cap heals/status when bag changes.
     local snapshot = buildSnapshot(self.Pocket.Roguemon)
     if not snapshot then
         return
@@ -461,9 +461,64 @@ function self.pollPocket()
         end
     end
     if #changes > 0 then
-        Utils.printDebug("[ITEM] Roguemon pocket updated: %s", table.concat(changes, ", "))
+        Utils.printDebug("[Item] Roguemon pocket updated: %s", table.concat(changes, ", "))
     end
     self.lastPocketSnapshot = snapshot
+end
+
+local TRACKER_ACTION_ITEM_OBTAINED = 3
+
+function self.registerTrackerActions(actionManager)
+    if not actionManager or not actionManager.registerHandler then
+        return
+    end
+    actionManager.registerHandler(TRACKER_ACTION_ITEM_OBTAINED, function(arg)
+        self.handleItemObtained(arg)
+    end)
+end
+
+local function getGymTmMoveId()
+    local base = GameSettings.roguemonTrackerDataAddr
+    local moveOff = GameSettings.roguemonTrackerChecklistGymTmMoveIdOffset
+    if not base or not moveOff then return 0 end
+    return Memory.readword(base + moveOff) or 0
+end
+
+function self.handleItemObtained(itemId)
+    if not itemId or itemId == 0 then return end
+    if self.getItemPocket(itemId) == self.Pocket.PokeBalls then return end
+    if Options and Options["Show reminders"] == false then return end
+
+    -- TM items: always show the move info screen regardless of "Show item descriptions"
+    local tmStart = GameSettings.TMItemStartIndex
+    local tmCount = GameSettings.tmCount
+    if tmStart and tmCount and itemId >= tmStart and itemId < tmStart + tmCount then
+        local tmNum = itemId - tmStart + 1
+        local moveId = Program.getMoveIdFromTMHMNumber(tmNum)
+        if moveId and moveId > 0 then
+            local isGymTm = moveId == getGymTmMoveId()
+            local maskGym = Options and Options["Mask Gym TM names"] == true
+            if not (isGymTm and maskGym) then
+                Roguemon.ScreenManager.showMoveInfo(moveId)
+            end
+            return
+        end
+    end
+
+    -- Non-TM items: respect the "Show item descriptions" option
+    if not (Options and Options["Show item descriptions"] == false) then
+        if MiscData.ItemEnhancedDescriptions[itemId] then
+            Roguemon.ScreenManager.showItemInfo(itemId)
+        end
+    end
+
+    -- Ground/hidden item pickups send ITEM_OBTAINED after HEAL_ITEM_ADDED,
+    -- overwriting it in the single-slot tracker action mechanism. Trigger the
+    -- over-cap check here so the notification is properly sequenced (queued
+    -- behind any item description already shown above).
+    if Roguemon.ReminderManager and Roguemon.ReminderManager.checkOverCap then
+        Roguemon.ReminderManager.checkOverCap()
+    end
 end
 
 -- Legacy alias for compatibility

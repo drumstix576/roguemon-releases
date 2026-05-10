@@ -103,7 +103,7 @@ function SpecialInsightTests.run()
     if not ok then
         Utils.printDebug("[WARN] Special Insight tests completed with failures (see above)")
     else
-        Utils.printDebug("> Special Insight tests passed")
+        Utils.printDebug("[TEST] Special Insight tests passed")
     end
 end
 

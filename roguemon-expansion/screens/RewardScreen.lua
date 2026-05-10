@@ -127,7 +127,15 @@ local function getOptionDesc(def, optionIndex, state)
         if optionMatch then
             local move = MoveData and MoveData.Moves and MoveData.Moves[state.starterPackMoveId] or nil
             local moveName = (move and move.name) or string.format("Move %d", state.starterPackMoveId)
-            desc = string.format("Learn a weak move (%s).", moveName)
+            local categoryLabel = ""
+            if move and move.category and not (Roguemon and Roguemon.isClassicProfile and Roguemon.isClassicProfile()) then
+                if move.category == MoveData.Categories.PHYSICAL then
+                    categoryLabel = "physical "
+                elseif move.category == MoveData.Categories.SPECIAL then
+                    categoryLabel = "special "
+                end
+            end
+            desc = string.format("Learn a weak %smove (%s).", categoryLabel, moveName)
         end
     end
     if def.name and desc == def.name then
@@ -231,18 +239,6 @@ function self.refreshOptions()
         end
     end
 
-    if self.descriptionText == "" then
-        for i = 1, count do
-            local def = options[i]
-            if def and def.name == "Starter Pack" then
-                local desc = getOptionDesc(def, i - 1, state)
-                if desc ~= "" then
-                    self.descriptionText = desc
-                    break
-                end
-            end
-        end
-    end
 end
 
 function self.getRerollChipCount()
@@ -275,6 +271,9 @@ function self.getOptionText(index)
     local def = self.getOption(index)
     if not def then
         return ""
+    end
+    if def.id and self.PrizeManager.getDisplayName then
+        return self.PrizeManager.getDisplayName(def.id)
     end
     return def.name or ""
 end
@@ -370,6 +369,12 @@ function self.drawScreen()
     canvas.text = Theme.COLORS[self.Colors.text]
 
     self.refreshOptions()
+
+    -- refreshOptions may trigger a screen transition via deferred submission
+    if Program.currentScreen ~= Roguemon.Screens.RewardScreen then
+        return
+    end
+
     self.rerollChipCount = self.getRerollChipCount()
     if self.prizeState and self.prizeState.queueTasks and (self.prizeState.queueCount or 0) > 0 then
         local idx = (self.prizeState.queueHead or 0) + 1
@@ -638,21 +643,40 @@ self.Buttons = {
         isVisible = function() return DEBUG_MODE end,
         boxColors = {"Default text"}
     },
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         self.returnToPreviousScreen()
     end, "Default text"),
     -- Reroll button-- only visible if the player has a Reroll Chip
     RerollButton = {
         type = Constants.ButtonTypes.FULL_BORDER,
         getText = function()
-            return string.format("Reroll (%d)", self.rerollChipCount or 0)
+            local count = self.rerollChipCount or 0
+            if count > 9 then
+                return string.format("Reroll %d", count)
+            end
+            return string.format("Reroll (%d)", count)
         end,
-        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 2, 7, 45, 12 },
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 2, 7, 40, 12 },
         boxColors = {"Default text"},
         onClick = function()
             Roguemon.ScreenManager.queueDeferredSubmission(self, function()
                 return self.PrizeManager.submitRerollRequest()
             end)
+        end,
+        isVisible = function()
+            local hasChips = (self.rerollChipCount or 0) > 0
+            local hasQueue = self.prizeState and (self.prizeState.queueCount or 0) > 0
+            return hasChips and hasQueue
+        end
+    },
+    -- Pool info button-- shows remaining prize pool; same visibility as Reroll
+    PoolInfoButton = {
+        type = Constants.ButtonTypes.FULL_BORDER,
+        getText = function() return "?" end,
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 44, 7, 9, 12 },
+        boxColors = {"Default text"},
+        onClick = function()
+            Program.changeScreenView(Roguemon.Screens.PrizePoolScreen)
         end,
         isVisible = function()
             local hasChips = (self.rerollChipCount or 0) > 0

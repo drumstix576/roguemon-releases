@@ -91,6 +91,36 @@ function dumpPickup()
   print("dumpPickup: not available (ROM pickup state not exposed)")
 end
 
+function dumpPool()
+  if not Roguemon or not Roguemon.PrizeManager then
+    print("dumpPool: PrizeManager missing")
+    return
+  end
+  local items = Roguemon.PrizeManager.readPoolRemaining()
+  if #items == 0 then
+    print("Pool is empty (no remaining items)")
+    return
+  end
+  print(string.format("Remaining pool: %d items", #items))
+  for i, entry in ipairs(items) do
+    print(string.format("  %2d. [%d] %s", i, entry.prizeId, entry.name))
+  end
+end
+
+function showPool()
+  if not Roguemon or not Roguemon.Screens or not Roguemon.ScreenManager then
+    print("showPool: Screens/ScreenManager missing")
+    return
+  end
+  local screen = Roguemon.Screens.PrizePoolScreen
+  if not screen then
+    print("showPool: PrizePoolScreen not found")
+    return
+  end
+  Program.changeScreenView(screen)
+  print("showPool: opened PrizePoolScreen")
+end
+
 function snap()
   print("== snap ==")
   dumpCallbacks()

@@ -1,11 +1,11 @@
 local UtilsTests = {
-    flagsOffset   = 0x1110,
+    flagsOffset   = 0x1130,
     flagOffsetFF  = 0x1F,
     routeInfoSize = 0xA1,
 }
 
 local function testEncryptionKey()
-    -- Utils.printDebug(">> Testing nil encryption key")
+    -- Utils.printDebug("[TEST] Testing nil encryption key")
     local res = {}
     sizes = {
         [1] = "8-bit",
@@ -21,7 +21,7 @@ local function testEncryptionKey()
 end
 
 local function testSaveBlocks()
-    -- Utils.printDebug(">> Testing save block addresses")
+    -- Utils.printDebug("[TEST] Testing save block addresses")
     local res = {}
     local reqParams = {
         "gSaveBlock1ptr",
@@ -43,7 +43,7 @@ local function testSaveBlocks()
 end
 
 local function testGameFlags()
-    -- Utils.printDebug(">> Testing flag functions")
+    -- Utils.printDebug("[TEST] Testing flag functions")
     local res = {}
     local reqParams = {
         "gameFlagsOffset",
@@ -86,7 +86,7 @@ local function testGameFlags()
 end
 
 local function testBase64Encode()
-    -- Utils.printDebug(">> Testing base64 encode")
+    -- Utils.printDebug("[TEST] Testing base64 encode")
 
     local utils = Roguemon.Core.Utils
     local res = utils.base64_encode("test")
@@ -100,7 +100,7 @@ local function testBase64Encode()
 end
 
 local function testBase64Decode()
-    -- Utils.printDebug(">> Testing base64 decode")
+    -- Utils.printDebug("[TEST] Testing base64 decode")
 
     local utils = Roguemon.Core.Utils
     local res = utils.base64_decode("dGVzdA==")
@@ -114,7 +114,7 @@ local function testBase64Decode()
 end
 
 local function testMakeBuffer()
-    -- Utils.printDebug(">> Testing make buffer")
+    -- Utils.printDebug("[TEST] Testing make buffer")
 
     local utils = Roguemon.Core.Utils
     local gs = Roguemon.GameSettings
@@ -138,7 +138,7 @@ local function testMakeBuffer()
 end
 
 local function testRemapRouteInfo()
-    -- Utils.printDebug(">> Testing remap route info")
+    -- Utils.printDebug("[TEST] Testing remap route info")
     local res = {}
     local reqParams = {
     }
@@ -165,7 +165,7 @@ local function testRemapRouteInfo()
 end
 
 function UtilsTests.run()
-    Utils.printDebug("> Running utils tests")
+    Utils.printDebug("[TEST] Running utils tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -189,7 +189,7 @@ function UtilsTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Utils tests completed with failures (see above)")
     else
-        Utils.printDebug("> Utils tests passed")
+        Utils.printDebug("[TEST] Utils tests passed")
     end
 end
 

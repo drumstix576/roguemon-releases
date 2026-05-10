@@ -17,6 +17,7 @@ local BUTTON_GAP = 8
 local TOP_LEFT_X = 6
 local TOP_BUTTON_Y = 54
 local ROGUESTONE_NO_OFFER = 0xFF
+local SEGMENT_INVALID_ID = 0xFF
 
 local function getState()
     local state = self.PrizeManager.readPrizeState()
@@ -32,6 +33,21 @@ local function getHpCostLabel(state)
         return "FREE"
     end
     return string.format("-%d HP Cap", cost)
+end
+
+local function getNextOfferLabel(state)
+    local nextSeg = state and state.roguestoneNextOfferSegmentId
+    if nextSeg == nil or nextSeg == SEGMENT_INVALID_ID then
+        return "Last offer"
+    end
+    local seg = Roguemon.SegmentManager.SegmentsById and Roguemon.SegmentManager.SegmentsById[nextSeg]
+    local segName = seg and seg.name or string.format("Segment %d", nextSeg)
+    local nextCost = state.roguestoneNextOfferHpCost or 0
+    if nextCost == 0 then
+        return string.format("Next: %s (FREE)", segName)
+    else
+        return string.format("Next: %s (-%d HP)", segName, nextCost)
+    end
 end
 
 function self.submitDecision(accept)
@@ -78,6 +94,16 @@ function self.drawScreen()
         Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, 26, string.format("Cost: %s", costLabel), Theme.COLORS["Default text"], canvas.shadow)
     end
 
+    local cost = state and state.roguestoneOfferHpCost or ROGUESTONE_NO_OFFER
+    if cost and cost ~= ROGUESTONE_NO_OFFER then
+        local hpCap = Roguemon.SegmentManager.getCurrentCaps()
+        local healValue = Roguemon.SegmentUI.countHealInfoFrom(Program.GameData.Items.HPHeals or {})
+        local newHpCap = math.max(1, hpCap - cost)
+        local capColor = healValue > newHpCap and Theme.COLORS["Negative text"] or Theme.COLORS["Default text"]
+        local capText = string.format("%.0f/%.0f -> %.0f/%.0f HP", healValue, hpCap, healValue, newHpCap)
+        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, 40, capText, capColor, canvas.shadow)
+    end
+
     local x = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + TOP_LEFT_X
     local y1 = TOP_BUTTON_Y
     local y2 = TOP_BUTTON_Y + BUTTON_HEIGHT + BUTTON_GAP
@@ -88,6 +114,10 @@ function self.drawScreen()
     self.Buttons.Reject.boxColors = { (self.pendingSelectionId == 0) and "Positive text" or "Default text" }
 
     self.drawButtons(suppressButtons, self.Buttons)
+
+    local nextLabel = getNextOfferLabel(state)
+    Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, y2 + BUTTON_HEIGHT + 6,
+        nextLabel, Theme.COLORS["Intermediate text"], canvas.shadow)
 
     Roguemon.ScreenManager.drawDeferredSubmissionLabel(canvas, self)
 end
@@ -124,7 +154,7 @@ self.Buttons = {
         end,
         boxColors = { "Default text" },
     },
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         if self.returnToPreviousScreen then
             self.returnToPreviousScreen()
         else

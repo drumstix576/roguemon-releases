@@ -173,6 +173,11 @@ function self.drawScreen()
 
     self.refreshChoices()
 
+    -- refreshChoices may trigger a screen transition via deferred submission
+    if Program.currentScreen ~= Roguemon.Screens.PrizeChoiceScreen then
+        return
+    end
+
     local state = getState()
     if state and state.queueTasks and (state.queueCount or 0) > 0 then
         local idx = (state.queueHead or 0) + 1
@@ -233,7 +238,7 @@ function self.clearScreen()
 end
 
 self.Buttons = {
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         self.returnToPreviousScreen()
     end, "Default text"),
     PrevPage = {

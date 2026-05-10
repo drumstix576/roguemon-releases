@@ -12,42 +12,22 @@ BaseTempScreen.mixin(self)
 -- Layout constants
 local LINE_HEIGHT = 14
 local LINE_COUNT = 8
-local TEXT_X = 14
-local TEXT_WIDTH = 115
+local TEXT_X = 6
+local TEXT_WIDTH = 131
 local DESC_Y_OFFSET = LINE_COUNT * LINE_HEIGHT + 8
 
-local function getSegmentName(segmentId)
-    if not segmentId then
-        return "???"
-    end
-    local seg = Roguemon.SegmentManager.SegmentsById and Roguemon.SegmentManager.SegmentsById[segmentId]
-    if seg and seg.name and seg.name ~= "" then
-        return seg.name
-    end
-    return string.format("Segment %d", segmentId)
-end
+-- Track whether we've auto-drained the Clairvoyance display trigger task
+local clairvoyanceTaskDrained = false
 
-local function getCurseName(curseId)
-    if not curseId or curseId == 0 then
-        return nil
-    end
-    -- Check CurseDefsById first, but only if name is non-empty after trimming
-    local def = Roguemon.CurseManager.CurseDefsById and Roguemon.CurseManager.CurseDefsById[curseId]
-    if def and def.name then
-        local trimmed = def.name:match("^%s*(.-)%s*$")
-        if trimmed and trimmed ~= "" then
-            return trimmed
-        end
-    end
-    -- Fall back to hardcoded CurseNames table
-    return Roguemon.CurseManager.CurseNames[curseId] or string.format("Curse %d", curseId)
-end
+local getSegmentName = Roguemon.CurseManager.getSegmentName
+local getCurseName = Roguemon.CurseManager.getCurseName
+local countLines = Roguemon.CurseManager.countWrappedLines
 
 -- Determine if a curse should be revealed based on state
--- Revealed if: Clairvoyance used, curse is active, or segment is past
+-- Revealed if: Clairvoyance item in bag, curse is active, or segment is past
 local function isCurseRevealedForAssignment(assignment, curseState)
-    -- Clairvoyance reveals all
-    if curseState and curseState.clairvoyanceUsed then
+    -- Clairvoyance item reveals all
+    if Roguemon.CurseManager.hasClairvoyance() then
         return true
     end
 
@@ -79,17 +59,45 @@ local function getCurseDescription(curseId)
     return ""
 end
 
+-- Auto-drain the Clairvoyance display trigger task from the prize queue.
+-- This is called once per screen visit; it sends a skip result to pop the no-op task.
+local function tryDrainClairvoyanceTask()
+    if clairvoyanceTaskDrained then return end
+    local pm = Roguemon.PrizeManager
+    if not pm or not pm.readPrizeState then return end
+    local state = pm.readPrizeState()
+    if not state or (state.queueCount or 0) == 0 then return end
+    local head = pm.getQueueHead and pm.getQueueHead(state)
+    if head == pm.Tasks.CLAIRVOYANCE then
+        pm.setPendingResult(pm.Tasks.CLAIRVOYANCE, 0xFF, 0)
+        clairvoyanceTaskDrained = true
+    end
+end
+
 function self.drawScreen()
     local canvas, suppressButtons = self.beginDraw()
 
+    -- Auto-drain display trigger task if present
+    tryDrainClairvoyanceTask()
+
     local assignments = Roguemon.CurseManager.getAssignments() or {}
+
+    -- Sort by segment progression order
+    local segOrder = Roguemon.SegmentManager.SegmentOrder or {}
+    local segRank = {}
+    for rank, segId in ipairs(segOrder) do
+        segRank[segId] = rank
+    end
+    table.sort(assignments, function(a, b)
+        return (segRank[a.segmentId] or 999) < (segRank[b.segmentId] or 999)
+    end)
+
     local curseState = Roguemon.CurseManager.State or Roguemon.CurseManager.readCurseState() or {}
     local segmentState = Roguemon.SegmentManager.State or Roguemon.SegmentManager.readSegmentState() or {}
-    local currentSegmentId = segmentState and segmentState.currentId or nil
     local activeCurseId = Roguemon.CurseManager.getActiveCurseId()
 
     -- Title
-    Drawing.drawText(canvas.x + 16, 6, "Curse Overview", Theme.COLORS["Header text"], canvas.shadow)
+    Drawing.drawText(canvas.x + TEXT_X, 6, "Curse Overview", Theme.COLORS["Header text"], canvas.shadow)
 
     -- Draw curse assignments
     local y = 22
@@ -133,12 +141,17 @@ function self.drawScreen()
             end
 
             local wrapped = self.wrapPixelsInline(displayText, TEXT_WIDTH)
+            local lines = countLines(wrapped)
+            local rowHeight = LINE_HEIGHT + (lines - 1) * Constants.SCREEN.LINESPACING
+            if lines == 1 then
+                wrapped = wrapped .. "\n"
+            end
             Drawing.drawText(canvas.x + TEXT_X, y, wrapped, textColor, canvas.shadow)
 
             -- Store button info for click handling
             self.Buttons["Curse" .. i] = {
                 type = Constants.ButtonTypes.NO_BORDER,
-                box = { canvas.x + TEXT_X, y, TEXT_WIDTH, LINE_HEIGHT },
+                box = { canvas.x + TEXT_X, y, TEXT_WIDTH, rowHeight },
                 curseId = assignment.curseId,
                 isRevealed = isRevealed and not isWarded,
                 onClick = function(btn)
@@ -149,7 +162,7 @@ function self.drawScreen()
                 end,
             }
 
-            y = y + LINE_HEIGHT
+            y = y + rowHeight
             drawnCount = drawnCount + 1
         end
     end
@@ -180,11 +193,23 @@ function self.drawScreen()
         end
     end
 
+    -- Position Swap button
+    self.Buttons.Swap.box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 3, Constants.SCREEN.HEIGHT - 20, 40, 12 }
+
     self.drawButtons(suppressButtons, self.Buttons)
 end
 
 local function closeScreen()
     self.selectedCurseId = nil
+    -- If prize tasks remain, open the queue screen
+    local pm = Roguemon.PrizeManager
+    if pm and pm.readPrizeState then
+        local state = pm.readPrizeState()
+        if state and (state.queueCount or 0) > 0 then
+            pm.openQueueScreen()
+            return
+        end
+    end
     if self.returnToPreviousScreen then
         self.returnToPreviousScreen()
     else
@@ -194,6 +219,18 @@ end
 
 self.Buttons = {
     Back = Drawing.createUIElementBackButton(closeScreen, "Default text"),
+    Swap = {
+        type = Constants.ButtonTypes.FULL_BORDER,
+        getText = function() return "Swap" end,
+        box = { 0, 0, 40, 12 },
+        onClick = function()
+            Program.changeScreenView(Roguemon.Screens.ClairvoyanceSwapScreen)
+        end,
+        isVisible = function()
+            return Roguemon.CurseManager.canSwapCurses()
+        end,
+        boxColors = { "Default text" },
+    },
 }
 
 function self.checkInput(xmouse, ymouse)
@@ -202,6 +239,7 @@ end
 
 function self.clearScreen()
     self.selectedCurseId = nil
+    clairvoyanceTaskDrained = false
     -- Clear dynamic buttons
     for k, _ in pairs(self.Buttons) do
         if k:match("^Curse%d+$") then

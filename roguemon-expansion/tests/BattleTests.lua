@@ -152,7 +152,7 @@ local function teamHasMon(team, targetId)
 end
 
 local function testBattle()
-    -- Utils.printDebug(">> Testing unit test battle")
+    -- Utils.printDebug("[TEST] Testing unit test battle")
     local res = {}
     local reqParams = {
 
@@ -180,7 +180,7 @@ function BattleTests.run()
         return
     end
 
-    Utils.printDebug("> Running battle tests")
+    Utils.printDebug("[TEST] Running battle tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -198,7 +198,7 @@ function BattleTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Battle tests completed with failures (see above)")
     else
-        Utils.printDebug("> Battle tests passed")
+        Utils.printDebug("[TEST] Battle tests passed")
     end
 end
 

@@ -6,7 +6,7 @@ local function randomHex()
 end
 
 local function testRegisterOverrideCycle()
-    -- Utils.printDebug(">> Testing register override")
+    -- Utils.printDebug("[TEST] Testing register override")
     local tag = randomHex()
     local funcName = "Test_" .. tag
 
@@ -36,7 +36,7 @@ local function testRegisterOverrideCycle()
 end
 
 local function testTableSwapAndClone()
-    -- Utils.printDebug(">> Testing table swap and clone")
+    -- Utils.printDebug("[TEST] Testing table swap and clone")
     local srcSwap = { Items = { a = 1 } }
     local destSwap = { Items = { b = 2 } }
     local originalSwapRef = srcSwap.Items
@@ -62,7 +62,7 @@ local function testTableSwapAndClone()
 end
 
 function OverrideManagerTests.run()
-    Utils.printDebug("> Running OverrideManager tests")
+    Utils.printDebug("[TEST] Running OverrideManager tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -81,7 +81,7 @@ function OverrideManagerTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] OverrideManager tests completed with failures (see above)")
     else
-        Utils.printDebug("> OverrideManager tests passed")
+        Utils.printDebug("[TEST] OverrideManager tests passed")
     end
 end
 

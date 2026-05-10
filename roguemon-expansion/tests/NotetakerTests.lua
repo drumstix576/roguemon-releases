@@ -191,7 +191,7 @@ function NotetakerTests.run()
     if not ok then
         Utils.printDebug("[WARN] Notetaker tests completed with failures (see above)")
     else
-        Utils.printDebug("> Notetaker tests passed")
+        Utils.printDebug("[TEST] Notetaker tests passed")
     end
 end
 

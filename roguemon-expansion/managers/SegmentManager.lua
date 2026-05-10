@@ -33,7 +33,14 @@ self.Completion = {
 local TRAINER_MANDATORY_MASK = 0x8000
 local TRAINER_ID_MASK = 0x7FFF
 local LIST_END = 0xFFFF
+local GROUP_START = 0xFFFD
+local GROUP_START_MANDATORY = 0xFFFC
+local GROUP_END = 0xFFFE
 local FLAG_STARTED = 0x01
+local FLAG_A3_RIVAL_PENDING = 0x02
+local FLAG_OPTIONAL_ACTIVE = 0x08
+local FLAG_A3_RIVAL_MERGED = 0x04
+local FLAG_A3_RIVAL_FORWARD = 0x20
 local BASE_HP_CAP = 150
 local BASE_STATUS_CAP = 3
 
@@ -124,17 +131,26 @@ local function readTrainerLists(ptr)
         return nil, nil, nil
     end
     local trainers, mandatory, trainerInfo = {}, {}, {}
+    local groupMandatory = false
     for _, value in ipairs(entries) do
-        local isMandatory = Utils.bit_and(value, TRAINER_MANDATORY_MASK) ~= 0
-        local trainerId = Utils.bit_and(value, TRAINER_ID_MASK)
-        trainers[#trainers + 1] = trainerId
-        if isMandatory then
-            mandatory[#mandatory + 1] = trainerId
+        if value == GROUP_START_MANDATORY then
+            groupMandatory = true
+        elseif value == GROUP_START then
+            groupMandatory = false
+        elseif value == GROUP_END then
+            groupMandatory = false
+        else
+            local isMandatory = groupMandatory or Utils.bit_and(value, TRAINER_MANDATORY_MASK) ~= 0
+            local trainerId = Utils.bit_and(value, TRAINER_ID_MASK)
+            trainers[#trainers + 1] = trainerId
+            if isMandatory then
+                mandatory[#mandatory + 1] = trainerId
+            end
+            trainerInfo[#trainerInfo + 1] = {
+                id = trainerId,
+                mandatory = isMandatory,
+            }
         end
-        trainerInfo[#trainerInfo + 1] = {
-            id = trainerId,
-            mandatory = isMandatory,
-        }
     end
     return trainers, mandatory, trainerInfo
 end
@@ -171,6 +187,7 @@ local function readSegmentDef(segId, baseAddr, entrySize, nameOffset)
     local completion = Memory.readbyte(base + 2)
     local hpCapDelta = Memory.readword(base + GameSettings.segmentDefHpCapDeltaOffset)
     local statusCapDelta = Memory.readbyte(base + GameSettings.segmentDefStatusCapDeltaOffset)
+    local flags = Memory.readbyte(base + GameSettings.segmentDefFlagsOffset)
     local namePtr = Memory.readdword(base + nameOffset)
     if not namePtr or namePtr == 0 then
         return nil
@@ -205,6 +222,7 @@ local function readSegmentDef(segId, baseAddr, entrySize, nameOffset)
         completion = completion,
         typeName = self.Types[segType],
         completionName = self.Completion[completion],
+        flags = flags or 0,
         hpCapDelta = hpCapDelta or 0,
         statusCapDelta = statusCapDelta or 0,
         routes = routes,
@@ -296,6 +314,7 @@ function self.readSegmentState()
     local hpCapModifierOffset = GameSettings.segmentStateHpCapModifierOffset
     local statusCapModifierOffset = GameSettings.segmentStateStatusCapModifierOffset
     local pocketSandUsedOffset = GameSettings.segmentStatePocketSandUsedOffset
+    local a3RivalIdOffset = GameSettings.segmentStateA3RivalIdOffset
 
     local state = {
         currentId = Memory.readbyte(base + currentIdOffset),
@@ -308,6 +327,7 @@ function self.readSegmentState()
         hpCapModifier = toSigned16(Memory.readword(base + hpCapModifierOffset)),
         statusCapModifier = toSigned8(Memory.readbyte(base + statusCapModifierOffset)),
         pocketSandUsedSegmentId = pocketSandUsedOffset and Memory.readbyte(base + pocketSandUsedOffset) or nil,
+        a3RivalId = a3RivalIdOffset and Memory.readbyte(base + a3RivalIdOffset) or 0xFF,
         completedMask = {
             Memory.readdword(base + completedMaskOffset),
             Memory.readdword(base + completedMaskOffset + 4),
@@ -442,11 +462,13 @@ function self.logStateChange(newState, prevState)
     local started = (newState.flags or 0) & FLAG_STARTED
     local activeLabel = started ~= 0 and describeSegment(newState.currentId, self.SegmentsById) or "none"
 
+    local optional = (newState.flags or 0) & FLAG_OPTIONAL_ACTIVE
     if prev.currentId ~= newState.currentId or prev.currentIndex ~= newState.currentIndex then
         parts[#parts + 1] = string.format(
-            "current %s idx %d",
+            "current %s idx %d%s",
             describeSegment(newState.currentId, self.SegmentsById),
-            newState.currentIndex or 0
+            newState.currentIndex or 0,
+            optional ~= 0 and " (bonus)" or ""
         )
     end
     if prev.flags ~= newState.flags then
@@ -472,7 +494,7 @@ function self.logStateChange(newState, prevState)
         parts[#parts + 1] = string.format("changeCounter %d", newState.changeCounter or -1)
     end
 
-    Utils.printDebug("[SEG] %s", table.concat(parts, " | "))
+    Utils.printDebug("[Segment] %s", table.concat(parts, " | "))
 end
 
 function self.countTrainerProgress(seg)
@@ -553,7 +575,66 @@ function self.countTrainerProgress(seg)
         end
     end
 
+    -- When a rival is forward-merged into this segment (A3+), add the rival
+    -- as +1 mandatory trainer. Defeated if any rival trainer has been beaten.
+    local state = self.State or self.readSegmentState()
+    if state and state.a3RivalId and state.a3RivalId ~= 0xFF
+        and seg.id == state.currentId then
+        local rivalSeg = self.SegmentsById[state.a3RivalId]
+        if rivalSeg then
+            local rivalDefeatedAny = false
+            for _, info in ipairs(rivalSeg.trainerInfo or {}) do
+                if Program.hasDefeatedTrainer(info.id, saveBlock1Addr) then
+                    rivalDefeatedAny = true
+                    break
+                end
+            end
+            total = total + 1
+            mandatoryTotal = mandatoryTotal + 1
+            if rivalDefeatedAny then
+                completed = completed + 1
+                mandatoryCompleted = mandatoryCompleted + 1
+            end
+        end
+    end
+
     return mandatoryCompleted, mandatoryTotal, completed, total
+end
+
+--- Returns true if the current segment is Viridian Forest or later in the
+--- segment order (i.e. the player has finished pivoting and chosen their mon).
+--- VF is the first segment in the base order, so the pre-pivot phase
+--- (Route 1/2 starter selection) has currentId == VF but FLAG_STARTED unset.
+--- We require the VF segment to be started (or a later segment to be active)
+--- before considering the player past the pivot.
+function self.isPastPivot()
+    local state = self.State
+    if not state then
+        state = self.readSegmentState()
+    end
+    if not state or state.currentId == nil then
+        return false
+    end
+    local vfSeg = self.SegmentsByName["Viridian Forest"]
+    if not vfSeg then
+        return false
+    end
+    local vfOrderIndex, currentOrderIndex
+    for i, segId in ipairs(self.SegmentOrder) do
+        if segId == vfSeg.id then vfOrderIndex = i end
+        if segId == state.currentId then currentOrderIndex = i end
+    end
+    if not vfOrderIndex or not currentOrderIndex then
+        return false
+    end
+    if currentOrderIndex > vfOrderIndex then
+        return true
+    end
+    -- At VF itself: only past pivot once the segment has actually started.
+    if currentOrderIndex == vfOrderIndex then
+        return Utils.bit_and(state.flags or 0, FLAG_STARTED) ~= 0
+    end
+    return false
 end
 
 function self.isFullClearSegment(seg)
@@ -589,7 +670,7 @@ function self.onBattleEnd()
 
     local mandatoryCompleted, mandatoryTotal, completed, total = self.countTrainerProgress(seg)
     Utils.printDebug(
-        "[SEG] active %s | flags 0x%02X | completed %d/%d mandatory, %d/%d total",
+        "[Segment] active %s | flags 0x%02X | completed %d/%d mandatory, %d/%d total",
         describeSegment(seg.id, self.SegmentsById),
         state.flags or 0,
         mandatoryCompleted, mandatoryTotal,
@@ -636,7 +717,7 @@ function self.pollRemainingItems()
     end
     self.lastRemainingItemCount = count
     Utils.printDebug(
-        "[SEG] items remaining %d | current %s",
+        "[Segment] items remaining %d | current %s",
         count,
         describeSegment(state.currentId, self.SegmentsById)
     )
@@ -731,11 +812,11 @@ function self.processUpdate()
     local newState = self.readSegmentState()
     if newState then
         self.initialStateLoaded = true
-        self.maybeClearReminderSuppression()
         self.State = newState
         if type(self.onStateChanged) == "function" then
             pcall(self.onStateChanged, newState, prevState)
         end
+        self.maybeClearReminderSuppression()
     end
 end
 
@@ -789,6 +870,9 @@ function self.initCallbacks()
             self.maybeCreateSegmentSaveState(newState, prevState)
             if not self.shouldSuppressReminders() then
                 Roguemon.ReminderManager.maybeNotifyCapChange(newState, prevState)
+                if Roguemon.ReminderManager.checkOverCap then
+                    Roguemon.ReminderManager.checkOverCap()
+                end
             end
             -- Notify CurseManager to recheck state on segment change
             -- (ROM may not increment curse changeCounter on segment transitions)
@@ -899,6 +983,107 @@ function self.getRemainingItemCount()
     end
 
     return total
+end
+
+function self.getRemainingItems()
+    local state = self.State or self.readSegmentState()
+    if not state or not self.SegmentsById then
+        return {}
+    end
+    local seg = self.SegmentsById[state.currentId]
+    if not seg then
+        return {}
+    end
+
+    local function collectRemaining(items)
+        if not items then
+            return {}
+        end
+        local result = {}
+        local saveBlock1Addr = Utils.getSaveBlock1Addr()
+        for _, itemFlag in ipairs(items) do
+            local itemAddrOffset = math.floor(itemFlag / 8)
+            local itemBit = itemFlag % 8
+            if Utils.getbits(Memory.readbyte(saveBlock1Addr + GameSettings.gameFlagsOffset + itemAddrOffset), itemBit, 1) == 0 then
+                result[#result + 1] = itemFlag
+            end
+        end
+        return result
+    end
+
+    if Utils.bit_and(state.flags or 0, FLAG_STARTED) ~= 0 then
+        return collectRemaining(seg.items)
+    end
+
+    local result = collectRemaining(seg.itemsBefore)
+    if state.currentIndex and state.currentIndex > 0 then
+        local prevId = self.SegmentOrder[state.currentIndex]
+        local prevSeg = prevId and self.SegmentsById[prevId] or nil
+        if prevSeg then
+            local prevItems = collectRemaining(prevSeg.items)
+            for _, flag in ipairs(prevItems) do
+                result[#result + 1] = flag
+            end
+        end
+    end
+
+    return result
+end
+
+function self.getUndefeatedTrainers()
+    local state = self.State or self.readSegmentState()
+    if not state or not self.SegmentsById then
+        return {}
+    end
+    local seg = self.SegmentsById[state.currentId]
+    if not seg then
+        return {}
+    end
+
+    local result = {}
+    local saveBlock1Addr = Utils.getSaveBlock1Addr()
+    local rivalDefeatedInSeg = false
+    if TrainerData and TrainerData.isRival then
+        for _, info in ipairs(seg.trainerInfo or {}) do
+            if TrainerData.isRival(info.id)
+                and Program.hasDefeatedTrainer(info.id, saveBlock1Addr) then
+                rivalDefeatedInSeg = true
+                break
+            end
+        end
+    end
+    for _, info in ipairs(seg.trainerInfo or {}) do
+        local isRival = TrainerData and TrainerData.isRival
+            and TrainerData.isRival(info.id)
+        if isRival and rivalDefeatedInSeg then
+            -- Any rival variant defeated collapses all starter variants into
+            -- a single completed entry; skip the undefeated siblings.
+        elseif not Program.hasDefeatedTrainer(info.id, saveBlock1Addr) then
+            result[#result + 1] = { id = info.id, mandatory = info.mandatory }
+        end
+    end
+
+    -- Include forward-merged rival trainers
+    if state.a3RivalId and state.a3RivalId ~= 0xFF
+        and seg.id == state.currentId then
+        local rivalSeg = self.SegmentsById[state.a3RivalId]
+        if rivalSeg then
+            local rivalDefeatedAny = false
+            for _, info in ipairs(rivalSeg.trainerInfo or {}) do
+                if Program.hasDefeatedTrainer(info.id, saveBlock1Addr) then
+                    rivalDefeatedAny = true
+                    break
+                end
+            end
+            if not rivalDefeatedAny then
+                for _, info in ipairs(rivalSeg.trainerInfo or {}) do
+                    result[#result + 1] = { id = info.id, mandatory = true }
+                end
+            end
+        end
+    end
+
+    return result
 end
 
 return self

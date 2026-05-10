@@ -40,18 +40,31 @@ local function restoreFunctions(module, moduleName)
     OverrideManager.originalCoreFunctions[moduleName] = nil
 end
 
+local function upsertEntry(list, entry, matches)
+    for i, existing in ipairs(list) do
+        if matches(existing) then
+            list[i] = entry
+            return
+        end
+    end
+    table.insert(list, entry)
+end
+
 local function swapTable(src, dest, tablename, moduleTag, destField, destRoot)
     OverrideManager.originalTables[tostring(src) .. "_" .. tablename] = src[tablename]
     src[tablename] = dest[tablename]
     if moduleTag then
         OverrideManager.tableSwaps[moduleTag] = OverrideManager.tableSwaps[moduleTag] or {}
-        table.insert(OverrideManager.tableSwaps[moduleTag], {
+        local entry = {
             src = src,
             tablename = tablename,
             destField = destField,
             destRoot = destRoot,
             destModule = type(destField) == "table" and destField or nil,
-        })
+        }
+        upsertEntry(OverrideManager.tableSwaps[moduleTag], entry, function(e)
+            return e.src == src and e.tablename == tablename
+        end)
     end
 end
 
@@ -74,13 +87,16 @@ local function cloneTable(src, dest, tablename, moduleTag, destField, destRoot)
     src[tablename] = deepClone(srcTable)
     if moduleTag then
         OverrideManager.tableClones[moduleTag] = OverrideManager.tableClones[moduleTag] or {}
-        table.insert(OverrideManager.tableClones[moduleTag], {
+        local entry = {
             src = src,
             tablename = tablename,
             destField = destField,
             destRoot = destRoot,
             destModule = type(destField) == "table" and destField or nil,
-        })
+        }
+        upsertEntry(OverrideManager.tableClones[moduleTag], entry, function(e)
+            return e.src == src and e.tablename == tablename
+        end)
     end
 end
 
@@ -132,13 +148,26 @@ function OverrideManager.registerOverride(moduleTag, targetModule, sourceField, 
         entry.sourceField = sourceField
         entry.sourceRoot = sourceRoot or "core"
     end
-    table.insert(OverrideManager.overrideRegistry[moduleTag], entry)
+    -- Replace-by-key on (targetModule, funcName) so reloads don't append a
+    -- new entry whose sourceModule pins the prior load's per-instance core
+    -- table (and the wrapper closures hanging off its fields).
+    upsertEntry(OverrideManager.overrideRegistry[moduleTag], entry, function(e)
+        return e.targetModule == targetModule and e.funcName == funcName
+    end)
 
     local function overrideFunction(module, moduleName, name, newFunc)
         if OverrideManager.originalCoreFunctions[moduleName] == nil then
             OverrideManager.originalCoreFunctions[moduleName] = {}
         end
-        OverrideManager.originalCoreFunctions[moduleName][name] = module[name]
+        -- Persist core originals in a global to survive extension reloads.
+        -- Without this, re-init saves the OLD extension's override as the
+        -- "original", creating infinite recursion when the override calls back.
+        _G.__roguemonCoreOriginals = _G.__roguemonCoreOriginals or {}
+        local gKey = moduleName .. "." .. name
+        if _G.__roguemonCoreOriginals[gKey] == nil then
+            _G.__roguemonCoreOriginals[gKey] = module[name]
+        end
+        OverrideManager.originalCoreFunctions[moduleName][name] = _G.__roguemonCoreOriginals[gKey]
         module[name] = newFunc
     end
 
@@ -173,6 +202,7 @@ function OverrideManager.registerTableClone(moduleTag, src, destField, tablename
 end
 
 function OverrideManager.overrideCoreTrackerFunctions()
+    OverrideManager.registerOverride("Drawing",     Drawing,     "Drawing",     "drawButton")
     OverrideManager.registerOverride("MoveData",    MoveData,    "MoveData",    "buildData")
     OverrideManager.registerOverride("MoveData",    MoveData,    "MoveData",    "isValid")
     OverrideManager.registerOverride("MoveData",    MoveData,    "MoveData",    "getTotal")
@@ -181,13 +211,17 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerOverride("AbilityData", AbilityData, "AbilityData", "updateResources")
     OverrideManager.registerOverride("AbilityData", AbilityData, "AbilityData", "buildData")
     OverrideManager.registerOverride("AbilityData", AbilityData, "AbilityData", "getTotal")
+    OverrideManager.registerOverride("AbilityData", AbilityData, "AbilityData", "getTypeDefensiveAbilities")
     OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "buildData")
     OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "getTotal")
     OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "namesToList")
     OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "readLevelUpMoves")
     OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "readAbilities")
     OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "getEffectiveness")
+    OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "dexMapInternalToNational")
+    OverrideManager.registerOverride("PokemonData", PokemonData, "PokemonData", "dexMapNationalToInternal")
     OverrideManager.registerOverride("TrainerData", TrainerData, "TrainerData", "buildData")
+    OverrideManager.registerOverride("TrainerData", TrainerData, "TrainerData", "checkIfDataIsRandomized")
     OverrideManager.registerOverride("Program",     Program,     "Program",     "changeGameSettingForLR")
     OverrideManager.registerOverride("Program",     Program,     "Program",     "getMoveIdFromTMHMNumber")
     OverrideManager.registerOverride("Program",     Program,     "Program",     "getPokemonTypes")
@@ -198,6 +232,7 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerOverride("Program",     Program,     "Program",     "updatePokemonTeams")
     OverrideManager.registerOverride("Program",     Program,     "Program",     "getNextLevelExp")
     OverrideManager.registerOverride("Program",     Program,     "Program",     "hasDefeatedTrainer")
+    OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "randomPokemonID")
     OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "hexFmt")
     OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "readString")
     OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "readAsciiString")
@@ -211,12 +246,16 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "calculateGyroBallPower")
     OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "calculateWeightRatioDamage")
     OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "calculateTrumpCardPower")
+    OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "dumpTable")
+    OverrideManager.registerOverride("Utils",       Utils,       "Utils",       "hexDump")
     OverrideManager.registerOverride("Memory",      Memory,      "Memory",      "readbyte")
     OverrideManager.registerOverride("Memory",      Memory,      "Memory",      "readword")
     OverrideManager.registerOverride("Memory",      Memory,      "Memory",      "readdword")
+    OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "changeOpposingPokemonView")
     OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "togglePokemonViewed")
     OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "getViewedIndex")
     OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "getViewedPokemon")
+    OverrideManager.registerOverride("Tracker",     Tracker,     "Battle",      "getViewedPokemon", "trackerGetViewedPokemon")
     OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "inActiveBattle")
     OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "update")
     OverrideManager.registerOverride("Battle",      Battle,      "Battle",      "updateTrackedInfo")
@@ -227,12 +266,29 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerOverride("Drawing",     Drawing,     "Drawing",     "drawTrainerTeamPokeballs")
     OverrideManager.registerOverride("Main",        Main,        "RunManager",  "LoadNextRom", nil, "root")
     OverrideManager.registerOverride("DataHelper",  DataHelper,  "DataHelper",  "buildTrackerScreenDisplay")
+    OverrideManager.registerOverride("DataHelper",  DataHelper,  "DataHelper",  "buildPokemonLogDisplay")
+    OverrideManager.registerOverride("DataHelper",  DataHelper,  "DataHelper",  "buildTrainerLogDisplay")
     OverrideManager.registerOverride("TrackerAPI",  TrackerAPI,  "TrackerAPI",  "getOpponentTrainerId")
+    OverrideManager.registerOverride("GachaMonData", GachaMonData, "GachaMonData", "calculateRatingScore")
+    OverrideManager.registerOverride("GachaMonData", GachaMonData, "GachaMonData", "tryImportMatchingRomRecentMons")
+    OverrideManager.registerOverride("GachaMonData", GachaMonData, "GachaMonData", "updateMainScreenViewedGachaMon")
+    OverrideManager.registerOverride("GachaMonData", GachaMonData, "GachaMonData", "autoDetermineIronmonRuleset")
     OverrideManager.registerOverride("GachaMonFileManager", GachaMonFileManager, "GachaMonFileManager", "getRatingSystemFilePath")
-    OverrideManager.registerOverride("InfoScreen",  InfoScreen,  "InfoScreen",  "getPokemonPlaceholderID")
+
+    OverrideManager.registerOverride("MiscData",    MiscData,    "MiscData",    "getTotalItems")
+
+    OverrideManager.registerOverride("TrackerScreen", TrackerScreen, "TrackerScreen", "drawPokemonInfoArea")
+    OverrideManager.registerOverride("TrackerScreen", TrackerScreen, "TrackerScreen", "drawMovesArea")
+
+    OverrideManager.registerOverride("InfoScreen",  InfoScreen,  "InfoScreen",  "showNextPokemon")
     OverrideManager.registerOverride("InfoScreen",  InfoScreen,  "InfoScreen",  "drawScreen")
 
+    OverrideManager.registerOverride("CoverageCalcScreen", CoverageCalcScreen, "CoverageCalcScreen", "calculateCoverageTable")
+    OverrideManager.registerOverride("CoverageCalcScreen", CoverageCalcScreen, "CoverageCalcScreen", "getPartyPokemonEffectiveMoveTypes")
+    OverrideManager.registerOverride("CoverageCalcScreen", CoverageCalcScreen, "CoverageCalcScreen", "createButtons")
+
     -- RandomizerLog overrides: populate log data from ROM instead of log file
+    OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "initBlankData", nil, "root")
     OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "parseBaseStatsItems", nil, "root")
     OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "parseEvolutions", nil, "root")
     OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "parseMoveSets", nil, "root")
@@ -241,6 +297,11 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "parseMoves", nil, "root")
     OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "parseTrainers", nil, "root")
     OverrideManager.registerOverride("RandomizerLog", RandomizerLog, "LogManager", "parseRoutes", nil, "root")
+
+    -- LogOverlay overrides: find log file in extension directory, always prompt for previous log
+    OverrideManager.registerOverride("LogOverlay", LogOverlay, "LogManager", "viewLogFile", nil, "root")
+    OverrideManager.registerOverride("LogOverlay", LogOverlay, "LogManager", "getLogFileAutodetected", nil, "root")
+    OverrideManager.registerOverride("LogOverlay", LogOverlay, "LogManager", "getLogFileFromPrompt", nil, "root")
 
     -- BattleDetailsScreen overrides: status readers
     OverrideManager.registerOverride("BattleDetailsScreen.GameFuncs", _G["BattleDetailsScreen"].GameFuncs, "BattleScreen", "readStatus2")
@@ -263,9 +324,77 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerTableClone("MiscData",    MiscData,    "MiscData",    "BattleItems")
     OverrideManager.registerTableClone("MiscData",    MiscData,    "MiscData",    "OtherItems")
     OverrideManager.registerTableClone("MiscData",    MiscData,    "MiscData",    "Items")
+
+    -- Override infoShortcutPressed to use segment-based pivot check instead of
+    -- the core's level >= 13 heuristic. Before VF segment: show route encounters.
+    -- After VF segment (post-pivot): show trainers on route.
+    OverrideManager.registerOverride("Input", Input, { infoShortcutPressed = function()
+        if not Main.IsOnBizhawk() or Program.currentScreen ~= TrackerScreen or Input.StatHighlighter:isActive() then
+            return
+        end
+        if Battle.inBattleScreen then
+            if Battle.isWildEncounter then
+                local pokemon = Tracker.getPokemon(1, false) or {}
+                if PokemonData.isValid(pokemon.pokemonID) then
+                    InfoScreen.changeScreenView(InfoScreen.Screens.POKEMON_INFO, pokemon.pokemonID)
+                end
+            else
+                if TrainerInfoScreen.buildScreen(Battle.opposingTrainerId) then
+                    TrainerInfoScreen.previousScreen = TrackerScreen
+                    Program.changeScreenView(TrainerInfoScreen)
+                end
+            end
+            return
+        end
+        local mapId = TrackerAPI.getMapId()
+        local pastPivot = Roguemon.SegmentManager and Roguemon.SegmentManager.isPastPivot and Roguemon.SegmentManager.isPastPivot()
+        if not pastPivot or RouteData.Locations.IsInSafariZone[mapId] then
+            if RouteData.hasRouteEncounterArea(mapId, RouteData.EncounterArea.LAND) then
+                InfoScreen.changeScreenView(InfoScreen.Screens.ROUTE_INFO, {
+                    mapId = mapId,
+                    encounterArea = RouteData.EncounterArea.LAND,
+                })
+            elseif RouteData.Locations.EarlyGameCity[mapId] then
+                local earlyRoutes = RouteData.getPivotOrSafariRouteIds() or {}
+                InfoScreen.changeScreenView(InfoScreen.Screens.ROUTE_INFO, {
+                    mapId = earlyRoutes[1] or mapId,
+                    encounterArea = RouteData.EncounterArea.LAND,
+                })
+            end
+        else
+            if TrainersOnRouteScreen.buildScreen(mapId) then
+                TrainersOnRouteScreen.previousScreen = TrackerScreen
+                Program.changeScreenView(TrainersOnRouteScreen)
+            end
+        end
+    end }, "infoShortcutPressed")
+
+    -- Override getPivotOrSafariRouteIds to return expansion-remapped layout IDs
+    -- instead of vanilla hardcoded FRLG IDs (89, 90, 110, 117 → 72, 73, 93, 100).
+    OverrideManager.registerOverride("RouteData", RouteData, { getPivotOrSafariRouteIds = function(useSafari)
+        if useSafari then
+            local routeIds = {}
+            for id, _ in pairs(RouteData.Locations.IsInSafariZone or {}) do
+                table.insert(routeIds, id)
+            end
+            table.sort(routeIds, function(a,b) return a < b end)
+            return routeIds
+        else
+            -- Remapped: Route 1 (72), Route 2 (73), Route 22 (93), Viridian Forest (100)
+            return { 72, 73, 93, 100 }
+        end
+    end }, "getPivotOrSafariRouteIds")
+
+    -- Roguemon has NatDex built into the ROM; stub to always return true
+    -- so core tracker features gated on NatDex (Fairy type, etc.) are enabled.
+    OverrideManager.registerOverride("CustomCode.RomHacks", CustomCode.RomHacks, { isPlayingNatDex = function() return true end }, "isPlayingNatDex")
+    OverrideManager.registerOverride("CustomCode.RomHacks", CustomCode.RomHacks, { isNatDexVersionOrLower = function() return false end }, "isNatDexVersionOrLower")
 end
 
 function OverrideManager.restoreCoreTrackerFunctions()
+    -- Clear persistent originals cache (functions are being restored to globals)
+    _G.__roguemonCoreOriginals = nil
+
     restoreFunctions(MoveData,    "MoveData")
     restoreFunctions(PokemonData, "PokemonData")
     restoreFunctions(Program,     "Program")
@@ -276,7 +405,14 @@ function OverrideManager.restoreCoreTrackerFunctions()
     restoreFunctions(Drawing,     "Drawing")
     restoreFunctions(Main,        "Main")
     restoreFunctions(InfoScreen,  "InfoScreen")
+    restoreFunctions(CoverageCalcScreen, "CoverageCalcScreen")
+    restoreFunctions(GachaMonData, "GachaMonData")
+    restoreFunctions(AbilityData, "AbilityData")
+
+    restoreFunctions(Input,         "Input")
+    restoreFunctions(RouteData,     "RouteData")
     restoreFunctions(RandomizerLog, "RandomizerLog")
+    restoreFunctions(LogOverlay,    "LogOverlay")
     restoreFunctions(_G["BattleDetailsScreen"].GameFuncs, "BattleDetailsScreen.GameFuncs")
 
     restoreTable(PokemonData, "TypeIndexMap")
@@ -330,7 +466,13 @@ function OverrideManager.applyOverrides(moduleTag)
         if OverrideManager.originalCoreFunctions[moduleName] == nil then
             OverrideManager.originalCoreFunctions[moduleName] = {}
         end
-        OverrideManager.originalCoreFunctions[moduleName][name] = module[name]
+        -- Use persistent global to survive extension reloads (same as registerOverride)
+        _G.__roguemonCoreOriginals = _G.__roguemonCoreOriginals or {}
+        local gKey = moduleName .. "." .. name
+        if _G.__roguemonCoreOriginals[gKey] == nil then
+            _G.__roguemonCoreOriginals[gKey] = module[name]
+        end
+        OverrideManager.originalCoreFunctions[moduleName][name] = _G.__roguemonCoreOriginals[gKey]
         module[name] = newFunc
     end
 

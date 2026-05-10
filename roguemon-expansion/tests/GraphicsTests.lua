@@ -5,7 +5,7 @@ local GraphicsTests = {
 }
 
 local function testSetIconOption()
-    -- Utils.printDebug(">> Testing icon set load")
+    -- Utils.printDebug("[TEST] Testing icon set load")
     local res = {}
 
     local function getNumRoguemonIconSets()
@@ -27,7 +27,7 @@ local function testSetIconOption()
 end
 
 function GraphicsTests.run()
-    Utils.printDebug("> Running graphics tests")
+    Utils.printDebug("[TEST] Running graphics tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -45,7 +45,7 @@ function GraphicsTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Graphics tests completed with failures (see above)")
     else
-        Utils.printDebug("> Graphics tests passed")
+        Utils.printDebug("[TEST] Graphics tests passed")
     end
 end
 
