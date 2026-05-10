@@ -271,8 +271,10 @@ local function RoguemonExpansionExtension()
     self.LoaderUtils       = safeLoad(self.extensionDir .. "LoaderUtils.lua")
     self.Tests             = safeLoad(self.extensionDir .. "Tests.lua")
     self.GameSettings      = safeLoad(self.extensionDir .. "GameSettings.lua")  -- auto-generated
+    -- BEGIN DEV-ONLY (stripped from beta/public release packages by release/Makefile)
     self.DevTools          = safeLoad(self.extensionDir .. "DevTools.lua")
     self.DevCheckpoints    = safeLoad(self.extensionDir .. "DevCheckpoints.lua")
+    -- END DEV-ONLY
 
     -- Leaderboard
     self.Leaderboard       = safeLoad(self.extensionDir .. "leaderboard" .. FileManager.slash .. "RoguemonLeaderboard.lua")
@@ -436,6 +438,19 @@ local function RoguemonExpansionExtension()
     end
 
     function self.startup()
+        -- BizHawk 2.11.0 has a bug (#4631) where event.unregisterbyname can NRE
+        -- on a disposed mGBA core wrapper, which crashes the extension on every
+        -- watch (re)registration. Fixed in 2.11.1. Detect and bail before any
+        -- watch setup runs.
+        if Main.IsOnBizhawk() and client.getversion() == "2.11" then
+            Main.DisplayError(
+                "RogueMon does not support BizHawk 2.11.0.\n\n" ..
+                "BizHawk 2.11.0 has a known mGBA Lua callback bug (issue #4631) " ..
+                "that crashes the tracker extension. Please upgrade to 2.11.1 " ..
+                "(recommended) or downgrade to 2.10.")
+            return
+        end
+
         -- Skip entirely if this isn't a RogueMon or vanilla FireRed ROM
         local GAMECODE_RGMN = 0x52474D4E -- "RGMN"
         local GAMECODE_BPRE = 0x42505245 -- "BPRE"
