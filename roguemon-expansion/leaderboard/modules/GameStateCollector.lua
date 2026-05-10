@@ -27,12 +27,4 @@ function self.getCurrentSegment()
   return mgr.SegmentsById[state.currentId]
 end
 
--- the segment transition code isn't called until after we fade to black
--- but, if we're already at total # of trainers - 1, then we know that this will be a full clear, and the check is post-loss
-function self.isFullClear(seg)
-  local _, _, completed, total = Roguemon.SegmentManager.countTrainerProgress(seg)
-  completed = completed + 1
-  return total > 0 and completed == total
-end
-
 return self

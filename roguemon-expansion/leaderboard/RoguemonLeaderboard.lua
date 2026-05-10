@@ -2,7 +2,6 @@ local self = {}
 
 -- Load all submodules
 local modulesPath = Roguemon.extensionDir .. "leaderboard" .. FileManager.slash .. "modules" .. FileManager.slash
-self.ScoringConstants    = dofile(modulesPath .. "ScoringConstants.lua")
 self.FileIOManager       = dofile(modulesPath .. "FileIOManager.lua")
 self.LeaderboardUtils    = dofile(modulesPath .. "LeaderboardUtils.lua")
 self.GameStateCollector  = dofile(modulesPath .. "GameStateCollector.lua")
@@ -41,7 +40,7 @@ local GameState = self.GameStateCollector
 -- Priority order matters: an "alpha-public" tag would match alpha first.
 -- Unknown tags fall through to "prod" so an unrecognized build never
 -- silently writes to local/dev.
-local function resolveLeaderboardTarget()
+function self.resolveLeaderboardTarget()
   local v = GameSettings.roguemonVersionStr or ""
   if v == "dev" then return "local" end
   if v:find("alpha", 1, true) then return "dev" end
@@ -65,7 +64,7 @@ function self.init()
   -- is sufficient; both may be present during the migration window.
   local username, secret, deviceToken = FileIO.loadUserInfo()
   if not username or (not secret and not deviceToken) then
-    self.LeaderboardUtils.addPopup("Welcome to the Roguemon Leaderboard! Please visit roguemon.gg to create your account and receive your roguemon_leaderboard_userinfo.txt file.")
+    self.LeaderboardUtils.showUserInfoForm()
     Utils.printDebug("[Leaderboard] Username or auth credentials missing from user info file.")
     return
   end
@@ -75,7 +74,7 @@ function self.init()
   self.UserInfo.deviceToken = deviceToken
 
   if not FileIO.verifyHeartbeat() then
-    local target = resolveLeaderboardTarget()
+    local target = self.resolveLeaderboardTarget()
     Utils.printDebug("[Leaderboard] Launching uploader with target=%s (build=%s)", target, GameSettings.roguemonVersionStr or "?")
     if not FileIO.launchEventUploader(target) then
       self.disabled = true
