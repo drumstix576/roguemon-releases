@@ -3,6 +3,10 @@ local self = {
     ItemEnhancedDescriptions = {},
 }
 
+function self.getTotalItems()
+    return GameSettings.itemsCount or 375
+end
+
 function self.readEnhancedItemDescriptionPtr(itemId)
     local base = GameSettings.itemEnhancedDescAddr
     if not base or base == 0 then return nil end
@@ -71,6 +75,30 @@ function self.buildData()
     Resources.Game.ItemNames = itemNames
     MiscData.Items = itemNames
 
+    -- Build held-item → type mapping for item-dependent move types
+    -- (Judgment/Plates, Techno Blast/Drives, Multi-Attack/Memories)
+    local HOLD_EFFECT_PLATE  = 91
+    local HOLD_EFFECT_DRIVE  = 95
+    local HOLD_EFFECT_MEMORY = 115
+    local SECONDARY_ID_OFFSET = 4  -- offsetof(struct Item, secondaryId)
+
+    self.ItemGrantedType = {}
+    local holdEffectOff = GameSettings.offsetItemHoldEffect
+    if holdEffectOff then
+        local b, w = Roguemon.LoaderUtils.readers(buf)
+        for itemId = 1, itemsCount - 1 do
+            local base = itemId * itemSize
+            local he = b(buf, base + holdEffectOff - 1)
+            if he == HOLD_EFFECT_PLATE or he == HOLD_EFFECT_DRIVE or he == HOLD_EFFECT_MEMORY then
+                local typeIdx = w(buf, base + SECONDARY_ID_OFFSET - 1)
+                local typeName = PokemonData.TypeIndexMap[typeIdx]
+                if typeName then
+                    self.ItemGrantedType[itemId] = { holdEffect = he, type = typeName }
+                end
+            end
+        end
+    end
+
     -- Bulk-read enhanced description pointers; lazy-load strings on first access
     local itemDescPtrs = Roguemon.Core.Utils.bulkReadPointerTable(
         GameSettings.itemEnhancedDescAddr,
@@ -89,6 +117,29 @@ function self.buildData()
                 end
             end
             noDescCache[itemId] = true
+            return nil
+        end,
+    })
+
+    -- Lazy-load regular item descriptions from the gItemsInfo struct
+    local descOffset = GameSettings.itemDescOffset
+    local noRegDescCache = {}
+    MiscData.ItemDescriptions = setmetatable({}, {
+        __index = function(t, itemId)
+            if noRegDescCache[itemId] then return nil end
+            if not descOffset or not itemsBase or not itemSize or itemId < 1 or itemId >= itemsCount then
+                noRegDescCache[itemId] = true
+                return nil
+            end
+            local ptr = Memory.readdword(itemsBase + (itemId * itemSize) + descOffset)
+            if ptr and ptr ~= 0 then
+                local desc = Utils.readString(ptr)
+                if desc and desc ~= "" then
+                    rawset(t, itemId, desc)
+                    return desc
+                end
+            end
+            noRegDescCache[itemId] = true
             return nil
         end,
     })
@@ -139,8 +190,7 @@ function self.buildData()
             ["EnergyPowder"] = "Energy Powder",
             ["X Defend"]     = "X Defense",
             ["X Special"]    = { "X Sp. Atk", "X Sp. Def" },
-            -- Roguemon: Moon Stone is renamed to Rogue Stone by the randomizer
-            ["Moon Stone"]   = "Rogue Stone",
+            ["Moon Stone"]   = "Roguestone",
         }
 
         local function copyEntry(item, newId, newName)
@@ -204,6 +254,26 @@ function self.buildData()
     MiscData.BattleItems        = remapTable(MiscData.BattleItems, "BattleItems")
     MiscData.OtherItems         = remapTable(MiscData.OtherItems, "OtherItems")
 
+    -- Fix healing amounts to match ROM expansion (Gen 7+/8+ values).
+    -- The base tracker uses pre-Gen 7 values; the expansion ROM uses GEN_LATEST for berries.
+    local healingFixes = {
+        ["Sitrus Berry"]  = { amount = 25, type = MiscData.HealingType.Percentage },
+        ["Figy Berry"]    = { amount = 100/3 },
+        ["Wiki Berry"]    = { amount = 100/3 },
+        ["Mago Berry"]    = { amount = 100/3 },
+        ["Aguav Berry"]   = { amount = 100/3 },
+        ["Iapapa Berry"]  = { amount = 100/3 },
+        ["Enigma Berry"]  = { amount = 25 },
+    }
+    for _, entry in pairs(MiscData.HealingItems) do
+        local fix = healingFixes[entry.name]
+        if fix then
+            for k, v in pairs(fix) do
+                entry[k] = v
+            end
+        end
+    end
+
     -- Items with gItemEffect_FullHeal that the base tracker doesn't include.
     -- All are StatusType.All (cure every status) in POCKET_ITEMS.
     local fullHealItems = {
@@ -226,6 +296,48 @@ function self.buildData()
                 type = MiscData.StatusType.All,
                 pocket = MiscData.BagPocket.Items,
             }
+        end
+    end
+
+    -- HP healing items not in the base tracker's HealingItems table.
+    local extraHealingItems = {
+        { name = "Sweet Heart",    amount = 20,  type = MiscData.HealingType.Constant, icon = "potion" },
+        { name = "Remedy",         amount = 20,  type = MiscData.HealingType.Constant, icon = "energy-powder" },
+        { name = "Fine Remedy",    amount = 50,  type = MiscData.HealingType.Constant, icon = "energy-powder" },
+        { name = "Superb Remedy",  amount = 200, type = MiscData.HealingType.Constant, icon = "energy-powder" },
+    }
+    for _, entry in ipairs(extraHealingItems) do
+        local id = newItems[entry.name] or newItemsUpper[entry.name:upper()]
+        if id and not MiscData.HealingItems[id] then
+            MiscData.HealingItems[id] = {
+                id = id,
+                name = itemNames[id] or entry.name,
+                icon = entry.icon,
+                amount = entry.amount,
+                type = entry.type,
+                pocket = MiscData.BagPocket.Items,
+            }
+        end
+    end
+end
+
+function self.populateTMDescriptions()
+    local tmCount = GameSettings.tmCount or 0
+    local tmStart = GameSettings.TMItemStartIndex
+    if not tmStart or tmStart == 0 or tmCount == 0 then return end
+
+    for tmNum = 1, tmCount do
+        local moveId = Program.getMoveIdFromTMHMNumber(tmNum)
+        if moveId and moveId > 0 then
+            local move = MoveData.Moves[moveId]
+            if move and move.summary then
+                local itemId = tmStart + tmNum - 1
+                local desc = move.summary
+                if move.name and move.name ~= "" then
+                    desc = move.name .. "\n" .. desc
+                end
+                rawset(MiscData.ItemEnhancedDescriptions, itemId, desc)
+            end
         end
     end
 end

@@ -5,7 +5,7 @@ local MemoryTests = {
 }
 
 local function testMemory()
-    -- Utils.printDebug(">> Testing memory read functions")
+    -- Utils.printDebug("[TEST] Testing memory read functions")
     local res = {}
     local reqParams = {
     }
@@ -26,7 +26,7 @@ local function testMemory()
 end
 
 function MemoryTests.run()
-    Utils.printDebug("> Running memory tests")
+    Utils.printDebug("[TEST] Running memory tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -44,7 +44,7 @@ function MemoryTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Memory tests completed with failures (see above)")
     else
-        Utils.printDebug("> Memory tests passed")
+        Utils.printDebug("[TEST] Memory tests passed")
     end
 end
 

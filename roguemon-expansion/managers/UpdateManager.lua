@@ -6,6 +6,8 @@ local self = {
     segmentDirty = false,
     prizeDirty = false,
     curseDirty = false,
+    trackerDataDirty = false,
+    shopStagingDirty = false,
     actionPending = false,
 
     -- SaveBlock3 tracking (shared across managers)
@@ -22,7 +24,7 @@ local self = {
 
 -- Called when SaveBlock3 pointer changes (new save loaded, etc.)
 local function onSaveBlock3Changed(newAddr)
-    Utils.printDebug("[UpdateManager] SaveBlock3 changed to 0x%08X", newAddr or 0)
+    Utils.printDebug("[Update] SaveBlock3 changed to 0x%08X", newAddr or 0)
 
     -- Notify all managers to re-register their watches at the new address
     if Roguemon.SegmentManager and Roguemon.SegmentManager.onSaveBlock3Changed then
@@ -36,6 +38,15 @@ local function onSaveBlock3Changed(newAddr)
     end
     if Roguemon.TrackerActionManager and Roguemon.TrackerActionManager.onSaveBlock3Changed then
         Roguemon.TrackerActionManager.onSaveBlock3Changed(newAddr)
+    end
+    if Roguemon.BuyPhaseManager and Roguemon.BuyPhaseManager.onSaveBlock3Changed then
+        Roguemon.BuyPhaseManager.onSaveBlock3Changed(newAddr)
+    end
+    if Roguemon.TrackerDataManager and Roguemon.TrackerDataManager.onSaveBlock3Changed then
+        Roguemon.TrackerDataManager.onSaveBlock3Changed(newAddr)
+    end
+    if Roguemon.ShopStagingManager and Roguemon.ShopStagingManager.onSaveBlock3Changed then
+        Roguemon.ShopStagingManager.onSaveBlock3Changed(newAddr)
     end
 end
 
@@ -64,10 +75,32 @@ function self.lowFrequencyUpdate()
     checkSaveBlock3()
 
     -- 2. Process dirty flags set by memory watches
+    -- actionPending first so TM info screen activates before cap notification
+    if self.actionPending then
+        self.actionPending = false
+        if Roguemon.TrackerActionManager and Roguemon.TrackerActionManager.processUpdate then
+            Roguemon.TrackerActionManager.processUpdate()
+        end
+    end
+
     if self.segmentDirty then
         self.segmentDirty = false
         if Roguemon.SegmentManager and Roguemon.SegmentManager.processUpdate then
             Roguemon.SegmentManager.processUpdate()
+        end
+    end
+
+    if self.trackerDataDirty then
+        self.trackerDataDirty = false
+        if Roguemon.TrackerDataManager and Roguemon.TrackerDataManager.processUpdate then
+            Roguemon.TrackerDataManager.processUpdate()
+        end
+    end
+
+    if self.shopStagingDirty then
+        self.shopStagingDirty = false
+        if Roguemon.ShopStagingManager and Roguemon.ShopStagingManager.processUpdate then
+            Roguemon.ShopStagingManager.processUpdate()
         end
     end
 
@@ -85,26 +118,15 @@ function self.lowFrequencyUpdate()
         end
     end
 
-    -- Poll for curse state initialization if not yet initialized
-    -- ROM initializes curse state after savestate restore; we need to detect when it's ready
-    if Roguemon.CurseManager and Roguemon.CurseManager.isStateInitialized then
-        if not Roguemon.CurseManager.isStateInitialized() then
-            -- Force a state read to check if ROM has initialized
-            Roguemon.CurseManager.processUpdate()
-        end
-    end
+    Roguemon.Leaderboard.checkForFrameSkip()
 
-    if self.actionPending then
-        self.actionPending = false
-        if Roguemon.TrackerActionManager and Roguemon.TrackerActionManager.processUpdate then
-            Roguemon.TrackerActionManager.processUpdate()
-        end
-    end
+    -- Curse initialization is now detected via baseSeed memory watch
+    -- (sets curseDirty when ROM writes the seed after savestate restore).
 
-    -- 3. Non-watch-based polling (ItemManager pocket snapshot)
-    if Roguemon.ItemManager and Roguemon.ItemManager.pollPocket then
-        Roguemon.ItemManager.pollPocket()
-    end
+    -- ItemManager pocket polling removed — item changes are already
+    -- delivered through TrackerActionManager's watch system
+    -- (TRACKER_ACTION_ITEM_OBTAINED).  pollPocket() remains available
+    -- for manual debugging via the Lua console.
 end
 
 -- High-frequency update path (called every 10 frames if enabled)
@@ -142,13 +164,15 @@ function self.startup()
     self.segmentDirty = false
     self.prizeDirty = false
     self.curseDirty = false
+    self.trackerDataDirty = false
+    self.shopStagingDirty = false
     self.actionPending = false
 
     -- Initial SaveBlock3 check to set up watches
     checkSaveBlock3()
 
     self.initialized = true
-    Utils.printDebug("[UpdateManager] Initialized")
+    Utils.printDebug("[Update] Initialized")
 end
 
 -- Clean up watches and state
@@ -168,9 +192,14 @@ function self.shutdown()
     if Roguemon.TrackerActionManager and Roguemon.TrackerActionManager.teardownWatches then
         Roguemon.TrackerActionManager.teardownWatches()
     end
+    if Roguemon.TrackerDataManager and Roguemon.TrackerDataManager.teardownWatches then
+        Roguemon.TrackerDataManager.teardownWatches()
+    end
+    if Roguemon.ShopStagingManager and Roguemon.ShopStagingManager.teardownWatches then
+        Roguemon.ShopStagingManager.teardownWatches()
+    end
 
     self.lastSaveBlock3Addr = nil
-    Utils.printDebug("[UpdateManager] Shutdown")
 end
 
 -- Mark a specific manager as needing update (called from memory watches)
@@ -181,6 +210,10 @@ function self.markDirty(managerName)
         self.prizeDirty = true
     elseif managerName == "curse" then
         self.curseDirty = true
+    elseif managerName == "trackerData" then
+        self.trackerDataDirty = true
+    elseif managerName == "shopStaging" then
+        self.shopStagingDirty = true
     elseif managerName == "action" then
         self.actionPending = true
     end

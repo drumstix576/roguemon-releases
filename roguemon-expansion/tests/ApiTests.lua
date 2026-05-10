@@ -135,7 +135,7 @@ local function testGrantItemUsesQuantity()
         stubGlobal("Roguemon", { TrackerCommandManager = buildCommandManager(capture) })
         stubGlobal("Resources", { Game = { ItemNames = { [14] = "Antidote" } } })
 
-        Api.grantItem("Antidote", 3)
+        Api.giveItem("Antidote", 3)
 
         assert(capture.cmd == 6, "Expected GRANT_ITEM command")
         assert(capture.arg0 == 14, "Expected resolved item id")
@@ -168,7 +168,7 @@ function ApiTests.run()
         { name = "api equipItem resolves", fn = testEquipItemResolvesName },
         { name = "api setNature maps stats", fn = testSetNatureMapsStats },
         { name = "api toggleAbility enqueues", fn = testToggleAbilityEnqueues },
-        { name = "api grantItem quantity", fn = testGrantItemUsesQuantity },
+        { name = "api giveItem quantity", fn = testGrantItemUsesQuantity },
         { name = "api setMusic enqueues", fn = testSetMusicEnqueues },
     }
 
@@ -181,7 +181,7 @@ function ApiTests.run()
     if not ok then
         Utils.printDebug("[WARN] Api tests completed with failures (see above)")
     else
-        Utils.printDebug("> Api tests passed")
+        Utils.printDebug("[TEST] Api tests passed")
     end
 end
 

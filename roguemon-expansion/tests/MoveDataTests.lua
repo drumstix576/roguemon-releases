@@ -17,7 +17,7 @@ local MoveDataTests = {
 }
 
 local function testParseMoveData()
-    -- Utils.printDebug(">> Testing parse move data")
+    -- Utils.printDebug("[TEST] Testing parse move data")
     local res = {}
     local reqParams = {
         "gBattleMoves",
@@ -52,7 +52,7 @@ local function testParseMoveData()
 end
 
 local function testGetTotal()
-    -- Utils.printDebug(">> Testing move count")
+    -- Utils.printDebug("[TEST] Testing move count")
     local res = {}
     local reqParams = {
         "gNumMoves",
@@ -80,7 +80,7 @@ local function testGetTotal()
 end
 
 local function testBuildMoves()
-    -- Utils.printDebug(">> Testing build moves")
+    -- Utils.printDebug("[TEST] Testing build moves")
     local res = {}
     local reqParams = {
         "gNumMoves",
@@ -117,7 +117,7 @@ local function testBuildMoves()
 end
 
 function MoveDataTests.run()
-    Utils.printDebug("> Running move data tests")
+    Utils.printDebug("[TEST] Running move data tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -137,7 +137,7 @@ function MoveDataTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Move data tests completed with failures (see above)")
     else
-        Utils.printDebug("> Move data tests passed")
+        Utils.printDebug("[TEST] Move data tests passed")
     end
 end
 

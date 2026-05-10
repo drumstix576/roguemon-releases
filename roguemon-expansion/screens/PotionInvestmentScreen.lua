@@ -124,7 +124,7 @@ self.Buttons = {
         end,
         boxColors = { "Default text" },
     },
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         if self.returnToPreviousScreen then
             self.returnToPreviousScreen()
         else

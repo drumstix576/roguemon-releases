@@ -42,7 +42,7 @@ local function isBattleActive()
     return false
 end
 
-function self.canUseInBattle()
+function self.isAvailable()
     local itemId = self.getItemId()
     if not itemId then
         return false
@@ -50,14 +50,15 @@ function self.canUseInBattle()
     if not Roguemon.ItemManager.hasRoguemonItem(itemId, 1) then
         return false
     end
-    if not isBattleActive() then
-        return false
-    end
     local typeId = self.getSelectedType()
     if not typeId or typeId == 0 then
         return false
     end
     return true
+end
+
+function self.canUseInBattle()
+    return self.isAvailable() and isBattleActive()
 end
 
 local function applyTypeToBattler(typeId)

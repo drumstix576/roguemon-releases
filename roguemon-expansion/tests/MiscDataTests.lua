@@ -7,13 +7,13 @@ local MiscDataTests = {
         pocket = MiscData.BagPocket.TMHM,
     },
     sizeofItem = 0x2C,
-    itemsCount = 0x034E,
+    itemsCount = 0x0352,
     offsetItemName = 0x14,
     item1Name = "Poké Ball"
 }
 
 local function testBuildData()
-    -- Utils.printDebug(">> Testing item data rebuild")
+    -- Utils.printDebug("[TEST] Testing item data rebuild")
     local res = {}
     local reqParams = {
         "gItemsInfo",
@@ -43,7 +43,7 @@ local function testBuildData()
 end
 
 local function testReadItemName()
-        -- Utils.printDebug(">> Testing read item name")
+        -- Utils.printDebug("[TEST] Testing read item name")
     local res = {}
     local reqParams = {
         "sizeofItem",
@@ -71,7 +71,7 @@ end
 
 
 local function testResetTmItems()
-        -- Utils.printDebug(">> Testing misc data functions")
+        -- Utils.printDebug("[TEST] Testing misc data functions")
     local res = {}
     local reqParams = {
         "TMItemStartIndex",
@@ -126,7 +126,7 @@ local function testResetTmItems()
 end
 
 function MiscDataTests.run()
-    Utils.printDebug("> Running misc data tests")
+    Utils.printDebug("[TEST] Running misc data tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -146,7 +146,7 @@ function MiscDataTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] MiscData tests completed with failures (see above)")
     else
-        Utils.printDebug("> MiscData tests passed")
+        Utils.printDebug("[TEST] MiscData tests passed")
     end
 end
 

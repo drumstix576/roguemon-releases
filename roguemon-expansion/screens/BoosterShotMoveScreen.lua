@@ -43,27 +43,28 @@ end
 
 local function getModeLabel(mode)
     if mode == MODE_ACCURACY then
-        return "ACC +10: "
+        return "ACC"
     end
-    return "POW +10: "
+    return "POW"
 end
 
 local function getModeDescription(mode, move)
     if not move then
         return ""
     end
+    local label = getModeLabel(mode)
     if mode == MODE_ACCURACY then
         local acc = tonumber(move.accuracy)
         if not acc then
             return ""
         end
-        return string.format("%d -> %d", acc, acc + 10)
+        return string.format("%s %d -> %d", label, acc, acc + 10)
     end
     local power = tonumber(move.power)
     if not power then
         return ""
     end
-    return string.format("%d -> %d", power, power + 10)
+    return string.format("%s %d -> %d", label, power, power + 10)
 end
 
 local function isEligibleMove(move, mode)
@@ -112,7 +113,7 @@ function self.refreshMoves()
                 if move and isEligibleMove(move, mode) then
                     list[#list + 1] = {
                         id = moveId,
-                        name = getModeLabel(mode) .. move.name,
+                        name = move.name .. ":",
                         description = getModeDescription(mode, move),
                     }
                 end
@@ -240,7 +241,7 @@ function self.clearScreen()
 end
 
 self.Buttons = {
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         self.returnToPreviousScreen()
     end, "Default text"),
     ChangeMode = {

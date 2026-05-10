@@ -7,29 +7,51 @@ SCREEN.Addresses.offsetWishStructWishSource = 0x20
 SCREEN.Addresses.offsetWishStructKnockOff = 0x26
 SCREEN.Addresses.offsetWishStructWeatherDuration = 0x24
 
+-- Override WeatherToNameKey for expansion bit layout:
+-- Bit 0=Rain, 1=RainPrimal, 2=RainDownpour, 3=Sun, 4=SunPrimal,
+-- 5=Sandstorm, 6=Hail, 7=Snow, 8=Fog, 9=StrongWinds
+SCREEN.Maps.WeatherToNameKey = {
+    [1] = "WeatherRain",        -- Rain / Rain Primal (bits 0-1)
+    [2] = "WeatherRain",        -- Rain Downpour (bit 2)
+    [3] = "WeatherSunlight",    -- Sun (bit 3)
+    [4] = "WeatherSunlight",    -- Sun Primal (bit 4)
+    [5] = "WeatherSandstorm",   -- Sandstorm (bit 5)
+    [6] = "WeatherHail",        -- Hail (bit 6)
+    [7] = "WeatherSnow",        -- Snow (bit 7)
+    [8] = "WeatherFog",         -- Fog (bit 8)
+    [9] = "WeatherStrongWinds", -- Strong Winds (bit 9)
+    ["default"] = "WeatherDefault",
+}
+
+-- Add resource strings for weather types not in the core tracker
+Resources[SCREEN.Key].WeatherSnow = "Snow"
+Resources[SCREEN.Key].WeatherFog = "Fog"
+Resources[SCREEN.Key].WeatherStrongWinds = "Strong Winds"
+
 SCREEN.RoguemonGameFuncs = {}
 
 function SCREEN.RoguemonGameFuncs.readWeather()
-    local weatherByte = Memory.readbyte(GameSettings.gBattleWeather)
+    local weatherWord = Memory.readword(GameSettings.gBattleWeather)
     local weatherTurns = Memory.readbyte(GameSettings.gWishFutureKnock + SCREEN.Addresses.offsetWishStructWeatherDuration)
 
-    if weatherByte == 0 then
+    if weatherWord == 0 then
         SCREEN.Data.WeatherKey = SCREEN.Maps.WeatherToNameKey["default"]
         SCREEN.Data.WeatherTurns = 0
         return
     end
 
     local weatherBitIndex = 0
+    local temp = weatherWord
     for _ = 1, 99999, 1 do
-        weatherByte = Utils.bit_rshift(weatherByte, 1)
+        temp = Utils.bit_rshift(temp, 1)
         weatherBitIndex = weatherBitIndex + 1
-        if weatherByte <= 1 then
+        if temp <= 1 then
             break
         end
     end
     SCREEN.Data.WeatherKey = SCREEN.Maps.WeatherToNameKey[weatherBitIndex] or SCREEN.Maps.WeatherToNameKey["default"]
 
-    if weatherBitIndex == 0 or weatherBitIndex == 3 or weatherBitIndex == 5 or weatherBitIndex == 7 then
+    if weatherTurns > 0 then
         SCREEN.Data.WeatherTurns = weatherTurns
         table.insert(SCREEN.Data.FieldDetails, SCREEN.IBattleDetail:new({
             Value = weatherTurns,

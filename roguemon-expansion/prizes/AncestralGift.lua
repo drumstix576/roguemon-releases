@@ -133,7 +133,7 @@ return function(_manager)
     return {
         name = "AncestralGift",
         getChoiceOverrides = function(_prizeManager, prizeDef, _state)
-            if not prizeDef or prizeDef.name ~= "Ancestral Gift" then
+            if not prizeDef or not prizeDef.name or not prizeDef.name:find("Ancestral Gift", 1, true) then
                 return nil, nil
             end
             local choices, reason = getAncestralChoiceIds()

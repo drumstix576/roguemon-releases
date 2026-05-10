@@ -23,7 +23,7 @@ local function withRestores(fn)
 end
 
 local function testGetSkipAutoSaveFlagPath()
-    -- Utils.printDebug(">> Testing get skip auto save flag path")
+    -- Utils.printDebug("[TEST] Testing get skip auto save flag path")
     withRestores(function(_, stubField)
         local run = Roguemon.RunManager
         stubField(Roguemon, "extensionDir", "extensions/roguemon-expansion" .. FileManager.slash)
@@ -34,7 +34,7 @@ local function testGetSkipAutoSaveFlagPath()
 end
 
 local function testMarkRandomizationComplete()
-    -- Utils.printDebug(">> Testing mark randomization complete")
+    -- Utils.printDebug("[TEST] Testing mark randomization complete")
     withRestores(function(stubGlobal, _)
         local run = Roguemon.RunManager
         stubGlobal("GameSettings", {
@@ -54,30 +54,33 @@ local function testMarkRandomizationComplete()
 end
 
 local function testLoadNextRomManual()
-    -- Utils.printDebug(">> Testing load next ROM (manual)")
+    -- Utils.printDebug("[TEST] Testing load next ROM (manual)")
     withRestores(function(stubGlobal, stubField)
         local run = Roguemon.RunManager
         stubField(run, "watchTriggered", false)
         stubGlobal("GameSettings", {
             backToTowerOffset = 1,
             sSpecialFlags = 0x2000,
+            getRomHash = function() return "test" end,
         })
         local wroteAddr, wroteValue
         stubGlobal("Memory", {
             readbyte = function(_) return 0 end,
             writebyte = function(addr, value) wroteAddr, wroteValue = addr, value end,
         })
-        local calls = { exit = 0, run = 0 }
+        local calls = { run = 0, crashReport = 0 }
         stubGlobal("Main", {
-            ExitSafely = function(_) calls.exit = calls.exit + 1 end,
             Run = function() calls.run = calls.run + 1 end,
             loadNextSeed = true,
+        })
+        stubGlobal("CrashRecoveryScreen", {
+            logCrashReport = function() calls.crashReport = calls.crashReport + 1 end,
         })
         stubField(Utils, "printDebug", function() end)
 
         run.LoadNextRom()
 
-        assert(calls.exit == 1, "Expected ExitSafely to be called")
+        assert(calls.crashReport == 1, "Expected CrashRecoveryScreen.logCrashReport to be called")
         assert(calls.run == 1, "Expected Main.Run to be called")
         assert(wroteAddr == GameSettings.sSpecialFlags, "Expected write to sSpecialFlags")
         assert(wroteValue == 0x02, string.format("Expected flags 0x02, got 0x%02X", wroteValue or 0))
@@ -86,7 +89,7 @@ local function testLoadNextRomManual()
 end
 
 local function testLoadNextRomTriggeredMinimal()
-    -- Utils.printDebug(">> Testing load next ROM (triggered)")
+    -- Utils.printDebug("[TEST] Testing load next ROM (triggered)")
     withRestores(function(stubGlobal, stubField)
         local run = Roguemon.RunManager
         stubField(run, "watchTriggered", true)
@@ -128,7 +131,7 @@ local function testLoadNextRomTriggeredMinimal()
 end
 
 function RunManagerTests.run()
-    Utils.printDebug("> Running RunManager tests")
+    Utils.printDebug("[TEST] Running RunManager tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -149,7 +152,7 @@ function RunManagerTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] RunManager tests completed with failures (see above)")
     else
-        Utils.printDebug("> RunManager tests passed")
+        Utils.printDebug("[TEST] RunManager tests passed")
     end
 end
 

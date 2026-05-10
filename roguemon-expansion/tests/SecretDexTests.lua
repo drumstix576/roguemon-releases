@@ -104,7 +104,7 @@ function SecretDexTests.run()
     if not ok then
         Utils.printDebug("[WARN] Secret Dex tests completed with failures (see above)")
     else
-        Utils.printDebug("> Secret Dex tests passed")
+        Utils.printDebug("[TEST] Secret Dex tests passed")
     end
 end
 

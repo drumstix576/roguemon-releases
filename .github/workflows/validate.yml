@@ -7,25 +7,36 @@ on:
     branches:
       - public
       - beta
-  push:
-    branches:
-      - public
-      - beta
 
 jobs:
   validate:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: No .gba files
         run: |
           if find . -name '*.gba' -not -path './.git/*' | grep -q .; then
-            echo "::error::Found .gba files in repository"
+            echo "::error::Found .gba files in repository — only .bps patches are allowed"
             find . -name '*.gba' -not -path './.git/*'
+            exit 1
+          fi
+
+      - name: No ROM files
+        run: |
+          ROM_EXTENSIONS="*.gba *.gbc *.gb *.nds *.nes *.sfc *.smc *.z64 *.n64"
+          found=0
+          for ext in $ROM_EXTENSIONS; do
+            if find . -name "$ext" -not -path './.git/*' | grep -q .; then
+              echo "::error::Found ROM files ($ext) in repository"
+              find . -name "$ext" -not -path './.git/*'
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
             exit 1
           fi
 
@@ -56,16 +67,26 @@ jobs:
           parse_version() {
             local ver="${1#v}"
             local base="${ver%%-*}"
+            local pre=0
+            if [[ "$ver" == *-*.* ]]; then
+              pre="${ver##*.}"
+            fi
             IFS='.' read -r major minor patch <<< "$base"
-            echo "$major $minor $patch"
+            echo "$major $minor $patch $pre"
           }
 
-          read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "$(parse_version "$TAG")"
-          read -r PREV_MAJOR PREV_MINOR PREV_PATCH <<< "$(parse_version "$PREV_TAG")"
+          read -r CUR_MAJOR CUR_MINOR CUR_PATCH CUR_PRE <<< "$(parse_version "$TAG")"
+          read -r PREV_MAJOR PREV_MINOR PREV_PATCH PREV_PRE <<< "$(parse_version "$PREV_TAG")"
 
+          # Compare base version (major.minor.patch)
           if [ "$CUR_MAJOR" -gt "$PREV_MAJOR" ]; then exit 0; fi
           if [ "$CUR_MAJOR" -eq "$PREV_MAJOR" ] && [ "$CUR_MINOR" -gt "$PREV_MINOR" ]; then exit 0; fi
           if [ "$CUR_MAJOR" -eq "$PREV_MAJOR" ] && [ "$CUR_MINOR" -eq "$PREV_MINOR" ] && [ "$CUR_PATCH" -gt "$PREV_PATCH" ]; then exit 0; fi
+          # Same base: pre-release N must increase, or pre-release graduating to full release (pre 0)
+          if [ "$CUR_MAJOR" -eq "$PREV_MAJOR" ] && [ "$CUR_MINOR" -eq "$PREV_MINOR" ] && [ "$CUR_PATCH" -eq "$PREV_PATCH" ]; then
+            if [ "$CUR_PRE" -eq 0 ] && [ "$PREV_PRE" -gt 0 ]; then exit 0; fi
+            if [ "$CUR_PRE" -gt "$PREV_PRE" ]; then exit 0; fi
+          fi
 
           echo "::error::Tag $TAG is not semantically newer than $PREV_TAG"
           exit 1
@@ -76,7 +97,7 @@ jobs:
           for f in \
             "RoguemonExpansion.lua" \
             "roguemon-expansion/randomizer.jar" \
-            "roguemon-expansion/roguemon.bps" \
+            "roguemon-expansion/roguemon_split.bps" \
             "roguemon-expansion/jbps.jar"; do
             if [ ! -f "$f" ]; then
               echo "::error::Missing required file: $f"
@@ -89,7 +110,7 @@ jobs:
 
       - name: File size checks
         run: |
-          BPS="roguemon-expansion/roguemon.bps"
+          BPS="roguemon-expansion/roguemon_split.bps"
           SIZE=$(stat -c%s "$BPS")
           MIN=$((10 * 1024 * 1024))
           MAX=$((32 * 1024 * 1024))
@@ -111,15 +132,17 @@ jobs:
           )
           found=0
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rEq -- "$pattern" \
+            if grep -rEq --exclude-dir='.git' \
               --include='*.lua' --include='*.java' --include='*.txt' \
               --include='*.md' --include='*.yml' --include='*.yaml' \
-              --include='*.json' --include='*.properties' .; then
+              --include='*.json' --include='*.properties' \
+              -- "$pattern" .; then
               echo "::error::Potential credential pattern found: $pattern"
-              grep -rEl -- "$pattern" \
+              grep -rEl --exclude-dir='.git' \
                 --include='*.lua' --include='*.java' --include='*.txt' \
                 --include='*.md' --include='*.yml' --include='*.yaml' \
-                --include='*.json' --include='*.properties' .
+                --include='*.json' --include='*.properties' \
+                -- "$pattern" .
               found=1
             fi
           done

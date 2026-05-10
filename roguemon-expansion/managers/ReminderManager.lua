@@ -1,6 +1,10 @@
 local self = {}
 
 local TRACKER_ACTION_EQUIP_LUCKY_EGG = 2
+local TRACKER_ACTION_HEAL_ITEM_ADDED = 5
+
+local lastHpOverCap = false
+local lastStatusOverCap = false
 
 local function shouldShowReminders()
     if Options and Options["Show reminders"] ~= nil then
@@ -10,10 +14,17 @@ local function shouldShowReminders()
 end
 
 local function shouldShowEggReminder()
-    if Options and Options["Egg reminders"] ~= nil then
-        return Options["Egg reminders"]
+    if Options and Options["Show Egg reminders"] ~= nil then
+        return Options["Show Egg reminders"]
     end
     return shouldShowReminders()
+end
+
+local function shouldShowOverCapReminder()
+    if Options and Options["Show reminders over cap"] ~= nil then
+        return Options["Show reminders over cap"]
+    end
+    return false
 end
 
 local function getPlayerName()
@@ -85,12 +96,103 @@ function self.handleLuckyEggReminder()
     return true
 end
 
+function self.resetOverCapState()
+    lastHpOverCap = false
+    lastStatusOverCap = false
+end
+
+function self.checkOverCap()
+    if not shouldShowReminders() then
+        return
+    end
+    if not shouldShowOverCapReminder() then
+        return
+    end
+    if not Roguemon.SegmentManager or not Roguemon.SegmentManager.isPastPivot or not Roguemon.SegmentManager.isPastPivot() then
+        return
+    end
+    -- Suppress cap reminder while any post-segment work is outstanding (shop,
+    -- cleansing, etc.). isChecklistPending strictly subsumes the old
+    -- isShopPending check since SHOP is one of the checklist bits.
+    if Roguemon.BuyPhaseManager and Roguemon.BuyPhaseManager.isChecklistPending and Roguemon.BuyPhaseManager.isChecklistPending() then
+        return
+    end
+
+    -- Read ROM-computed cap usage; fall back to local computation.
+    local readRom = Roguemon.SegmentUI and Roguemon.SegmentUI.readCapUsageFromRom
+    local rom = readRom and readRom()
+    local healValue, statusVal, hpCap, statusCap
+    if rom then
+        healValue = rom.hpHealValue
+        statusVal = rom.statusHealCount
+        hpCap = rom.hpCap
+        statusCap = rom.statusCap
+    else
+        if Program.updateBagItems then
+            Program.updateBagItems()
+        end
+        hpCap, statusCap = Roguemon.SegmentManager.getCurrentCaps()
+        local hpHeals = Program.GameData and Program.GameData.Items and Program.GameData.Items.HPHeals or {}
+        local statusHeals = Program.GameData and Program.GameData.Items and Program.GameData.Items.StatusHeals or {}
+        healValue = Roguemon.SegmentUI.countHealInfoFrom(hpHeals)
+        statusVal = Roguemon.SegmentUI.countStatusHealsFrom(statusHeals)
+    end
+
+    local hpOver = healValue > hpCap
+    local statusOver = statusVal > statusCap
+    local hpNewlyOver = hpOver and not lastHpOverCap
+    local statusNewlyOver = statusOver and not lastStatusOverCap
+
+    if hpNewlyOver or statusNewlyOver then
+        local message, image
+        if hpNewlyOver and statusNewlyOver then
+            message = "A healing item must be used or trashed"
+            image = "healing-pocket-statuscap.png"
+        elseif hpNewlyOver then
+            message = "An HP healing item must be used or trashed"
+            image = "healing-pocket.png"
+        else
+            message = "A status healing item must be used or trashed"
+            image = "status-cap.png"
+        end
+        -- Re-check condition at display time so the notification is
+        -- silently dropped if the player resolves the over-cap state
+        -- (e.g. trashes a heal) before dismissing a preceding screen.
+        local function stillOverCap()
+            local fn = Roguemon.SegmentUI and Roguemon.SegmentUI.readCapUsageFromRom
+            local r = fn and fn()
+            if r then
+                return r.hpHealValue > r.hpCap or r.statusHealCount > r.statusCap
+            end
+            if Program.updateBagItems then
+                Program.updateBagItems()
+            end
+            local hp, st = Roguemon.SegmentManager.getCurrentCaps()
+            local hpH = Program.GameData and Program.GameData.Items and Program.GameData.Items.HPHeals or {}
+            local stH = Program.GameData and Program.GameData.Items and Program.GameData.Items.StatusHeals or {}
+            return Roguemon.SegmentUI.countHealInfoFrom(hpH) > hp
+                or Roguemon.SegmentUI.countStatusHealsFrom(stH) > st
+        end
+        Roguemon.ScreenManager.displayNotification(message, image, nil, nil, nil, stillOverCap)
+    end
+
+    lastHpOverCap = hpOver
+    lastStatusOverCap = statusOver
+end
+
+function self.handleHealItemAdded(arg)
+    self.checkOverCap()
+end
+
 function self.registerTrackerActions(actionManager)
     if not actionManager or not actionManager.registerHandler then
         return
     end
     actionManager.registerHandler(TRACKER_ACTION_EQUIP_LUCKY_EGG, function()
         self.handleLuckyEggReminder()
+    end)
+    actionManager.registerHandler(TRACKER_ACTION_HEAL_ITEM_ADDED, function(arg)
+        self.handleHealItemAdded(arg)
     end)
 end
 
@@ -127,10 +229,7 @@ function self.maybeNotifyCapChange(newState, prevState)
     end
 
     local notif = "Gained " .. table.concat(parts, (deltaHp > 0 and deltaStatus > 0) and " and " or "")
-    local function onClose()
-        Roguemon.PrizeManager.openQueueScreen()
-    end
-    Roguemon.ScreenManager.displayNotification(notif, "healing-pocket.png", nil, onClose)
+    Roguemon.ScreenManager.displayNotification(notif, "healing-pocket.png")
 end
 
 return self

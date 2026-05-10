@@ -95,7 +95,7 @@ function self.clearScreen()
 end
 
 self.Buttons = {
-    BackButton = Drawing.createUIElementBackButton(function()
+    Back = Drawing.createUIElementBackButton(function()
         self.returnToHomeScreen()
     end, "Default text"),
     DescriptionText = {

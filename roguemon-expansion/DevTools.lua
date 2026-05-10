@@ -4,6 +4,8 @@ local DevTools = {
     Modules = {},
     Tests = {},
     Curses = {},
+    Checkpoints = {},
+    Logging = {},
 }
 local POCKET_REFRESH_LABEL = "Roguemon:DevToolsPocketRefresh"
 local CAP_REFRESH_LABEL = "Roguemon:DevToolsCapRefresh"
@@ -11,11 +13,16 @@ local PRIZE_AWARD_REFRESH_LABEL = "Roguemon:DevToolsPrizeAwardRefresh"
 local CURSE_REFRESH_LABEL = "Roguemon:DevToolsCurseRefresh"
 local CURSE_ASSIGN_REFRESH_LABEL = "Roguemon:DevToolsCurseAssignRefresh"
 local OVERWORLD_FLAG_REFRESH_LABEL = "Roguemon:DevToolsOverworldFlags"
+local SEGMENT_LABEL_REFRESH = "Roguemon:DevToolsSegmentLabel"
 local PRIZE_AWARD_FLAGS = {
     { id = 0, name = "ABILITY_CAPSULE" },
     { id = 1, name = "POCKET_SAND" },
     { id = 2, name = "POTION_INVESTMENT" },
     { id = 3, name = "REVIVE" },
+    { id = 4, name = "FOUND_TM" },
+    { id = 5, name = "FOUND_ITEM" },
+    { id = 6, name = "FIGHT_ROUTE_12_13" },
+    { id = 7, name = "FIGHT_ROUTE_14_15" },
 }
 local cachedLists = {
     extension = nil,
@@ -195,7 +202,7 @@ local function getItemName(itemId)
 end
 
 function DevTools.Run.show()
-    Utils.printDebug("> Initializing RogueMon Run DevTools")
+    Utils.printDebug("[DevTools] Initializing RogueMon Run DevTools")
     closeForm(DevTools.Run.formHandle)
 
     local rowH = 24
@@ -244,9 +251,9 @@ function DevTools.Run.show()
         local y = padding
         y = y + headerH + rowH + sectionGap -- RogueMon Items
         y = y + headerH + (rowH * 2) + sectionGap -- Item Unlocks
-        y = y + headerH + rowH -- Buy/Cleansing Phase
+        y = y + headerH + rowH -- Post-Gym Checklist
         y = y + headerH + (rowH * 3) -- Overworld Flags
-        y = y + sectionGap + headerH + rowH -- More DevTools
+        y = y + sectionGap + headerH + (rowH * 2) -- More DevTools (2 rows)
         return y
     end
 
@@ -264,7 +271,24 @@ function DevTools.Run.show()
     local yRight = padding
 
     -- Left column: Segments
-    forms.label(form, "Segments", xLeft, yLeft, 200, headerH)
+    local segmentHeaderLabel = forms.label(form, "Segment: --", xLeft, yLeft, 200, headerH)
+    local function refreshSegmentLabel()
+        local state = Roguemon.SegmentManager.State
+        local name = "--"
+        if state then
+            local seg = Roguemon.SegmentManager.SegmentsById[state.currentId]
+            name = seg and seg.name or ("ID " .. tostring(state.currentId))
+        end
+        forms.settext(segmentHeaderLabel, "Segment: " .. name)
+    end
+    refreshSegmentLabel()
+    Program.removeFrameCounter(SEGMENT_LABEL_REFRESH)
+    Program.addFrameCounter(SEGMENT_LABEL_REFRESH, 30, function()
+        local ok = pcall(refreshSegmentLabel)
+        if not ok then
+            Program.removeFrameCounter(SEGMENT_LABEL_REFRESH)
+        end
+    end)
     yLeft = yLeft + headerH
     local function setSpecialFlag(offset, label)
         if not GameSettings.sSpecialFlags or not offset then
@@ -291,6 +315,7 @@ function DevTools.Run.show()
     local segmentButtonW = math.floor((contentW - gap) / 2)
     local segmentItemsToggle
     local segmentFlagsToggle
+    local segmentExpToggle
     local getSegmentMask
     local jumpSegment
 
@@ -302,11 +327,20 @@ function DevTools.Run.show()
     end, xLeft + segmentButtonW + gap, yLeft, segmentButtonW, rowH - 4)
     yLeft = yLeft + rowH
 
-    local checkW = math.floor((contentW - gap) / 2)
+    -- Checkboxes auto-size to their label by default; explicitly set Width on
+    -- each so they stack without overlap regardless of label length.
+    local itemsW = 100
+    local flagsW = 55
+    local expW = 50
     segmentItemsToggle = forms.checkbox(form, "Items/Trainers", xLeft, yLeft)
-    segmentFlagsToggle = forms.checkbox(form, "Flags", xLeft + checkW + gap, yLeft)
+    forms.setproperty(segmentItemsToggle, "Width", itemsW)
+    segmentFlagsToggle = forms.checkbox(form, "Flags", xLeft + itemsW, yLeft)
+    forms.setproperty(segmentFlagsToggle, "Width", flagsW)
+    segmentExpToggle = forms.checkbox(form, "EXP", xLeft + itemsW + flagsW, yLeft)
+    forms.setproperty(segmentExpToggle, "Width", expW)
     forms.setproperty(segmentItemsToggle, "Checked", true)
     forms.setproperty(segmentFlagsToggle, "Checked", true)
+    forms.setproperty(segmentExpToggle, "Checked", true)
     yLeft = yLeft + rowH + sectionGap
 
     getSegmentMask = function()
@@ -317,10 +351,14 @@ function DevTools.Run.show()
         if forms.ischecked(segmentFlagsToggle) then
             mask = Utils.bit_or(mask, 0x02)
         end
+        if forms.ischecked(segmentExpToggle) then
+            mask = Utils.bit_or(mask, 0x04)
+        end
         return mask
     end
 
     jumpSegment = function(delta)
+        Roguemon.SegmentManager.suppressReminders = true
         local mask = getSegmentMask()
         setSpecialVar(0, mask)
         if delta < 0 then
@@ -328,6 +366,13 @@ function DevTools.Run.show()
         else
             setSpecialFlag(GameSettings.segmentNextOffset, "segment next")
         end
+        -- VAR_ROGUEMON_MILESTONE (0x4041) - VARS_START (0x4000) = 0x41
+        local milestoneOffset = 0x41
+        local milestone = Roguemon.Core.Utils.readGameVar(milestoneOffset)
+        local newMilestone = milestone + delta
+        if newMilestone < 0 then newMilestone = 0 end
+        if newMilestone > 35 then newMilestone = 35 end
+        Roguemon.Core.Utils.writeGameVar(milestoneOffset, newMilestone)
     end
 
 
@@ -767,7 +812,7 @@ function DevTools.Run.show()
             Utils.printDebug("[WARN] Unable to remove RogueMon item")
             return
         end
-        Utils.printDebug("[ITEM] Removed %s", getItemName(itemId))
+        Utils.printDebug("[Item] Removed %s", getItemName(itemId))
         refreshRoguemonPocketDropdown()
     end, xRight + dropdownW + gap, yRight, buttonW, rowH - 4)
     yRight = yRight + rowH + sectionGap
@@ -917,7 +962,7 @@ function DevTools.Run.show()
             Utils.printDebug("[WARN] Unable to unlock item")
             return
         end
-        Utils.printDebug("[ITEM] Unlocked %s", getItemName(itemId))
+        Utils.printDebug("[Item] Unlocked %s", getItemName(itemId))
         refreshUnlockDropdowns()
     end, xRight + dropdownW + gap, yRight, buttonW, rowH - 4)
     yRight = yRight + rowH
@@ -934,7 +979,7 @@ function DevTools.Run.show()
             Utils.printDebug("[WARN] Unable to lock item")
             return
         end
-        Utils.printDebug("[ITEM] Locked %s", getItemName(itemId))
+        Utils.printDebug("[Item] Locked %s", getItemName(itemId))
         refreshUnlockDropdowns()
     end, xRight + dropdownW + gap, yRight, buttonW, rowH - 4)
     yRight = yRight + rowH
@@ -949,36 +994,36 @@ function DevTools.Run.show()
 
     yRight = yRight + sectionGap
 
-    -- Right column: Buy/Cleansing Phase
-    forms.label(form, "Buy/Cleansing Phase", xRight, yRight, 200, headerH)
+    -- Right column: Post-Gym Checklist
+    forms.label(form, "Post-Gym Checklist", xRight, yRight, 200, headerH)
     yRight = yRight + headerH
-
-    local function setCleansingPhase(active)
-        if not (GameSettings and GameSettings.roguemonTrackerDataAddr and GameSettings.roguemonTrackerCleansingPhaseOffset) then
-            Utils.printDebug("[WARN] Cleansing phase offsets missing in GameSettings")
-            return false
-        end
-        local addr = GameSettings.roguemonTrackerDataAddr + GameSettings.roguemonTrackerCleansingPhaseOffset
-        Memory.writebyte(addr, active and 1 or 0)
-        return true
-    end
 
     local openButtonW = math.floor(contentW * 0.4)
     local sideButtonW = math.floor((contentW - openButtonW - (gap * 2)) / 2)
-    forms.button(form, "Open Shop", function()
+    forms.button(form, "Shop", function()
         Roguemon.BuyPhaseManager.openShopScreen()
     end, xRight, yRight, openButtonW, rowH - 4)
-    forms.button(form, "Begin Cleanse", function()
-        if not setCleansingPhase(true) then
-            return
-        end
-        Utils.printDebug("[Shop] Cleansing phase set")
+    forms.button(form, "Cleanse", function()
+        -- Open the cleansing screen with a freshly-built manifest. checklistActive
+        -- is derived in ROM, so we don't write it here. Sending CHECKLIST_STEP
+        -- for CLEANSING is the canonical activation, but the screen tolerates
+        -- being opened directly for dev inspection.
+        Roguemon.Screens.CleansingReminderScreen.show(false)
     end, xRight + openButtonW + gap, yRight, sideButtonW, rowH - 4)
-    forms.button(form, "End Cleanse", function()
-        if not setCleansingPhase(false) then
-            return
+    forms.button(form, "Force End", function()
+        -- Force-complete all checklist steps on the ROM side (applies cap,
+        -- clears shop/investment/roguestone/cleansing, unlocks gym exit).
+        Roguemon.TrackerCommandManager.enqueueCommand(
+            Roguemon.TrackerCommandManager.Commands.CHECKLIST_STEP,
+            Roguemon.TrackerCommandManager.ChecklistSteps.FORCE_END, 0, 0
+        )
+        -- Clear tracker-side state
+        Roguemon.BuyPhaseManager.onCleansingComplete()
+        local checklistScreen = Roguemon.Screens.ChecklistScreen
+        if checklistScreen then
+            checklistScreen.pendingStep = nil
         end
-        Utils.printDebug("[Shop] Cleansing phase cleared")
+        Utils.printDebug("[DevTools] Checklist force-ended")
     end, xRight + openButtonW + gap + sideButtonW + gap, yRight, sideButtonW, rowH - 4)
     yRight = yRight + rowH
 
@@ -1071,12 +1116,20 @@ function DevTools.Run.show()
         DevTools.Tests.show()
     end, xRight + (moreButtonW + gap) * 2, yRight, moreButtonW, rowH - 4)
     yRight = yRight + rowH
+    local checkpointButtonW = math.floor((contentW - gap) / 2)
+    forms.button(form, "Checkpoints", function()
+        DevTools.Checkpoints.show()
+    end, xRight, yRight, checkpointButtonW, rowH - 4)
+    forms.button(form, "Logging", function()
+        DevTools.Logging.show()
+    end, xRight + checkpointButtonW + gap, yRight, checkpointButtonW, rowH - 4)
+    yRight = yRight + rowH
 
     return form
 end
 
 function DevTools.Curses.show()
-    Utils.printDebug("> Initializing RogueMon Curse Assignments DevTools")
+    Utils.printDebug("[DevTools] Initializing RogueMon Curse Assignments DevTools")
     closeForm(DevTools.Curses.formHandle)
 
     local rowH = 24
@@ -1233,7 +1286,7 @@ function DevTools.Curses.show()
     local function readAndPopulate()
         local assignments = Roguemon.CurseManager.readCurses()
         if not assignments then
-            Utils.printDebug("[CurseAssign] Could not read curse state")
+            Utils.printDebug("[Curse] Could not read curse state")
             return
         end
         for slot = 1, slotCount do
@@ -1308,23 +1361,23 @@ function DevTools.Curses.show()
             prevRomSegIds[slot] = slotSegByLabel[slot][segLabel] or 0
             prevRomCurseIds[slot] = slotCurseByLabel[slot][curseLabel] or 0
         end
-        Utils.printDebug("[CurseAssign] Applied %d assignments", count)
+        Utils.printDebug("[Curse] Applied %d assignments", count)
     end, x, y, btnW, rowH - 4)
 
     forms.button(form, "Read ROM", function()
         readAndPopulate()
-        Utils.printDebug("[CurseAssign] Refreshed from ROM")
+        Utils.printDebug("[Curse] Refreshed from ROM")
     end, x + (btnW + gap), y, btnW, rowH - 4)
 
     forms.button(form, "Clear", function()
         local curseId = Roguemon.CurseManager.getActiveCurseId()
         if curseId == Roguemon.CurseManager.CurseId.NONE then
-            Utils.printDebug("[CurseAssign] No active curse to clear")
+            Utils.printDebug("[Curse] No active curse to clear")
             return
         end
         local curseName = Roguemon.CurseManager.CurseNames[curseId] or string.format("Curse %d", curseId)
         if not Roguemon.CurseManager.writeActiveCurseId(0) then
-            Utils.printDebug("[CurseAssign] Could not clear active curse")
+            Utils.printDebug("[Curse] Could not clear active curse")
             return
         end
         -- processUpdate detects the change and triggers onStateChanged,
@@ -1333,13 +1386,13 @@ function DevTools.Curses.show()
         if Program and Program.redraw then
             Program.redraw(true)
         end
-        Utils.printDebug("[CurseAssign] Cleared active curse: %s", curseName)
+        Utils.printDebug("[Curse] Cleared active curse: %s", curseName)
     end, x + (btnW + gap) * 2, y, btnW, rowH - 4)
 
     forms.button(form, "Debug", function()
         local assignments = Roguemon.CurseManager.readCurses()
         if not assignments then
-            Utils.printDebug("[CurseAssign] No curse state")
+            Utils.printDebug("[Curse] No curse state")
             return
         end
         Utils.printDebug("== Curse Assignments (DevTools) ==")
@@ -1367,7 +1420,7 @@ function DevTools.Curses.show()
 end
 
 function DevTools.Modules.show()
-    Utils.printDebug("> Initializing RogueMon DevTools (Modules)")
+    Utils.printDebug("[DevTools] Initializing RogueMon DevTools (Modules)")
     closeForm(DevTools.Modules.formHandle)
     local modules = getExtensionModules()
     local coreModules = getCoreModules()
@@ -1410,7 +1463,7 @@ function DevTools.Modules.show()
         local modName = forms.gettext(moduleDropdown)
         if not Utils.isNilOrEmpty(modName) then
             Roguemon.reloadAndReapply(modName)
-            Utils.printDebug("> %s reload complete", modName)
+            Utils.printDebug("[DevTools] %s reload complete", modName)
         end
     end, x + dropdownW + gap, y, buttonW, rowH - 4)
     y = y + rowH + sectionGap
@@ -1422,7 +1475,7 @@ function DevTools.Modules.show()
         local modName = forms.gettext(coreDropdown)
         if not Utils.isNilOrEmpty(modName) then
             Roguemon.reloadAndReapply(modName)
-            Utils.printDebug("> %s reload complete", modName)
+            Utils.printDebug("[DevTools] %s reload complete", modName)
         end
     end, x + dropdownW + gap, y, buttonW, rowH - 4)
     y = y + rowH + sectionGap
@@ -1444,7 +1497,7 @@ function DevTools.Modules.show()
                 Roguemon.ScreenManager.setCurrentRoguemonScreen(screen)
                 Program.changeScreenView(screen)
             end
-            Utils.printDebug("> %s reload complete", screenName)
+            Utils.printDebug("[DevTools] %s reload complete", screenName)
         else
             Utils.printDebug("[WARN] Failed to reload %s: %s", screenName, tostring(screen))
         end
@@ -1464,7 +1517,7 @@ function DevTools.Modules.show()
         if ok and prize then
             local managerKey = prizeName .. "Manager"
             Roguemon[managerKey] = prize
-            Utils.printDebug("> %s reload complete", prizeName)
+            Utils.printDebug("[DevTools] %s reload complete", prizeName)
         else
             Utils.printDebug("[WARN] Failed to reload %s: %s", prizeName, tostring(prize))
         end
@@ -1474,7 +1527,7 @@ function DevTools.Modules.show()
 end
 
 function DevTools.Tests.show()
-    Utils.printDebug("> Initializing RogueMon DevTools (Tests)")
+    Utils.printDebug("[DevTools] Initializing RogueMon DevTools (Tests)")
     closeForm(DevTools.Tests.formHandle)
     local tests = getTestModules()
 
@@ -1509,7 +1562,7 @@ function DevTools.Tests.show()
     forms.button(form, "Run All Tests", function()
         if Roguemon.Tests and Roguemon.Tests.run then
             Roguemon.Tests.run()
-            Utils.printDebug("> Finished running unit tests")
+            Utils.printDebug("[DevTools] Finished running unit tests")
         end
     end, x, y, contentW, rowH - 4)
     y = y + rowH
@@ -1521,10 +1574,125 @@ function DevTools.Tests.show()
             local testsMod = dofile(testsFile)
             if testsMod and testsMod.run then
                 testsMod.run()
-                Utils.printDebug("> %s complete", testModule)
+                Utils.printDebug("[DevTools] %s complete", testModule)
             end
         end
     end, x + dropdownW + gap, y, buttonW, rowH - 4)
+
+    return form
+end
+
+function DevTools.Checkpoints.show()
+    Utils.printDebug("[DevTools] Initializing RogueMon DevTools (Checkpoints)")
+    closeForm(DevTools.Checkpoints.formHandle)
+
+    if not Roguemon.DevCheckpoints then
+        Utils.printDebug("[WARN] DevCheckpoints module not loaded")
+        return
+    end
+
+    local names = Roguemon.DevCheckpoints.getNames()
+    if #names == 0 then
+        names = { "(none defined)" }
+    end
+
+    local rowH = 24
+    local padding = 16
+    local dropdownW = 140
+    local buttonW = 60
+    local gap = 6
+    local contentW = dropdownW + gap + buttonW
+    local headerH = 18
+
+    local function calcHeight()
+        local y = padding
+        y = y + headerH + rowH
+        return y + padding
+    end
+
+    local height = calcHeight()
+    local width = (padding * 2) + contentW
+
+    local form = forms.newform(width, height, "Roguemon Dev Tools - Checkpoints")
+    DevTools.Checkpoints.formHandle = form
+    forms.setproperty(form, "MinimizeBox", false)
+    forms.setproperty(form, "MaximizeBox", false)
+
+    local x = padding
+    local y = padding
+
+    forms.label(form, "Dev Checkpoints", x, y, 200, headerH)
+    y = y + headerH
+    local cpDropdown = createDropdown(form, x, y - 2, dropdownW, rowH, names)
+    forms.button(form, "Go", function()
+        local selected = forms.gettext(cpDropdown)
+        local checkpoint = Roguemon.DevCheckpoints.findByName(selected)
+        if not checkpoint then
+            Utils.printDebug("[Checkpoint] No checkpoint selected")
+            return
+        end
+        Roguemon.DevCheckpoints.execute(checkpoint)
+    end, x + dropdownW + gap, y, buttonW, rowH - 4)
+
+    return form
+end
+
+function DevTools.Logging.show()
+    Utils.printDebug("[DevTools] Initializing RogueMon DevTools (Logging)")
+    closeForm(DevTools.Logging.formHandle)
+
+    local rowH = 24
+    local padding = 16
+    local headerH = 18
+    local gap = 6
+    local topicW = 120
+    local statusW = 70
+    local buttonW = 60
+
+    -- Collect and sort topic names
+    local topics = {}
+    for name, _ in pairs(Roguemon.Core.Utils.debugTopics) do
+        topics[#topics + 1] = name
+    end
+    table.sort(topics)
+
+    local contentW = topicW + gap + statusW + gap + buttonW
+    local height = padding + headerH + (#topics * rowH) + padding
+    local width = (padding * 2) + contentW
+
+    local form = forms.newform(width, height, "Roguemon Dev Tools - Logging")
+    DevTools.Logging.formHandle = form
+    forms.setproperty(form, "MinimizeBox", false)
+    forms.setproperty(form, "MaximizeBox", false)
+
+    local x = padding
+    local y = padding
+
+    forms.label(form, "Debug Topics", x, y, 200, headerH)
+    y = y + headerH
+
+    for _, topic in ipairs(topics) do
+        local enabled = Roguemon.Core.Utils.debugTopics[topic]
+
+        forms.label(form, topic, x, y + 2, topicW, rowH)
+
+        local statusLabel = forms.label(form, enabled and "Enabled" or "Disabled",
+            x + topicW + gap, y + 2, statusW, rowH)
+        forms.setproperty(statusLabel, "ForeColor", enabled and "Green" or "Red")
+
+        local btn
+        btn = forms.button(form, enabled and "Disable" or "Enable", function()
+            local current = Roguemon.Core.Utils.debugTopics[topic]
+            local newVal = not current
+            Roguemon.Core.Utils.debugTopics[topic] = newVal
+            Roguemon.Core.Utils.saveDebugTopics()
+            forms.settext(statusLabel, newVal and "Enabled" or "Disabled")
+            forms.setproperty(statusLabel, "ForeColor", newVal and "Green" or "Red")
+            forms.settext(btn, newVal and "Disable" or "Enable")
+        end, x + topicW + gap + statusW + gap, y, buttonW, rowH - 4)
+
+        y = y + rowH
+    end
 
     return form
 end

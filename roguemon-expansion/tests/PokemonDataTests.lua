@@ -17,7 +17,7 @@ local PokemonDataTests = {
 }
 
 local function testReadSpeciesInfo()
-    -- Utils.printDebug(">> Testing read species info")
+    -- Utils.printDebug("[TEST] Testing read species info")
     local res = {}
     local reqParams = {
         "sizeofBaseStatsPokemon",
@@ -95,7 +95,7 @@ local function testReadSpeciesInfo()
 end
 
 local function testReadAbilities()
-    -- Utils.printDebug(">> Testing read abilities")
+    -- Utils.printDebug("[TEST] Testing read abilities")
     local res = {}
     local reqParams = {
         "sizeofBaseStatsPokemon",
@@ -124,7 +124,7 @@ local function testReadAbilities()
 end
 
 local function testReadLevelUpMoves()
-    -- Utils.printDebug(">> Testing read level-up moves")
+    -- Utils.printDebug("[TEST] Testing read level-up moves")
     local res = {}
     local reqParams = {
         "sizeofBaseStatsPokemon",
@@ -161,7 +161,7 @@ local function testReadLevelUpMoves()
 end
 
 local function testReadEvolution()
-    -- Utils.printDebug(">> Testing read evolution")
+    -- Utils.printDebug("[TEST] Testing read evolution")
     local res = {}
     local reqParams = {
         "gSpeciesInfo",
@@ -316,7 +316,7 @@ local function testEvolutionSamples()
 end
 
 local function testBuildData()
-    -- Utils.printDebug(">> Testing build data")
+    -- Utils.printDebug("[TEST] Testing build data")
     local res = {}
     local reqParams = {
         "sizeofBaseStatsPokemon",
@@ -352,7 +352,7 @@ local function testBuildData()
 end
 
 local function testGetTotal()
-    -- Utils.printDebug(">> Testing get total")
+    -- Utils.printDebug("[TEST] Testing get total")
     local res = {}
     local reqParams = {
         "gNumPokemon",
@@ -379,7 +379,7 @@ local function testGetTotal()
 end
 
 local function testNamesToList()
-    -- Utils.printDebug(">> Testing names to list")
+    -- Utils.printDebug("[TEST] Testing names to list")
     local res = {}
     local reqParams = {
         "gNumPokemon",
@@ -407,8 +407,86 @@ local function testNamesToList()
     return Roguemon.Tests.validateResults(PokemonDataTests, res)
 end
 
+local function testLinkedForms()
+    -- Verify pokemon.linkedForms grouping by learnset-pointer identity.
+    local res = {}
+    local reqParams = {
+        "gNumPokemon",
+        "offsetSpeciesLearnset",
+    }
+    for _, p in pairs(reqParams) do
+        local val = GameSettings[p]
+        assert(val ~= nil and (type(val) == "string" or val > 0),
+            string.format("GameSettings.%s is not defined", p)
+        )
+        res[p] = val
+    end
+
+    -- Known-linked sample pairs. These rely on the randomizer's learnset-sharing
+    -- pass having run; the ROM under test must be a randomized Roguemon ROM.
+    local knownPairs = {
+        { head = 778,  tail = 1206 },   -- Mimikyu Disguised/Busted
+        { head = 681,  tail = 1156 },   -- Aegislash Shield/Blade
+        { head = 555,  tail = 1092 },   -- Darmanitan Standard/Zen
+        { head = 746,  tail = 1175 },   -- Wishiwashi Solo/School
+    }
+
+    local linkedSpeciesSeen = 0
+    local singletonSeen = 0
+    for i = 1, GameSettings.gNumPokemon do
+        local pk = PokemonData.Pokemon[i]
+        if pk then
+            assert(pk.linkedForms ~= nil,
+                string.format("Species #%d has nil linkedForms", i))
+            assert(type(pk.linkedForms) == "table",
+                string.format("Species #%d linkedForms is not a table", i))
+            assert(#pk.linkedForms >= 1,
+                string.format("Species #%d linkedForms is empty", i))
+            -- Symmetry: every member of the group must list the same group.
+            for _, siblingId in ipairs(pk.linkedForms) do
+                local sibling = PokemonData.Pokemon[siblingId]
+                assert(sibling ~= nil,
+                    string.format("Species #%d links to missing species #%d", i, siblingId))
+                assert(#sibling.linkedForms == #pk.linkedForms,
+                    string.format("Species #%d and sibling #%d have different group sizes: %d vs %d",
+                        i, siblingId, #pk.linkedForms, #sibling.linkedForms))
+            end
+            if #pk.linkedForms > 1 then
+                linkedSpeciesSeen = linkedSpeciesSeen + 1
+            else
+                singletonSeen = singletonSeen + 1
+            end
+        end
+    end
+
+    -- Verify each known pair actually ended up in the same group.
+    for _, pair in ipairs(knownPairs) do
+        local headPk = PokemonData.Pokemon[pair.head]
+        if headPk then
+            local found = false
+            for _, id in ipairs(headPk.linkedForms) do
+                if id == pair.tail then
+                    found = true
+                    break
+                end
+            end
+            assert(found, string.format(
+                "Expected species #%d and #%d in same linked-forme group (head's group: %s)",
+                pair.head, pair.tail, table.concat(headPk.linkedForms, ",")))
+        end
+    end
+
+    -- Sanity: some species should be singletons, and some should be grouped.
+    assert(linkedSpeciesSeen > 0, "No linked-forme groups detected; sharing pass may not have run")
+    assert(singletonSeen > 0, "No singleton species detected; grouping logic may be over-eager")
+    Utils.printDebug(string.format("[TEST] linkedForms: %d linked, %d singleton",
+        linkedSpeciesSeen, singletonSeen))
+
+    return Roguemon.Tests.validateResults(PokemonDataTests, res)
+end
+
 function PokemonDataTests.run()
-    Utils.printDebug("> Running pokemon data tests")
+    Utils.printDebug("[TEST] Running pokemon data tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -420,6 +498,7 @@ function PokemonDataTests.run()
         tests.runTest("build data", testBuildData),
         tests.runTest("get total", testGetTotal),
         tests.runTest("names to list", testNamesToList),
+        tests.runTest("linked forms", testLinkedForms),
     }
 
     local allPassed = true
@@ -433,7 +512,7 @@ function PokemonDataTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] PokemonData tests completed with failures (see above)")
     else
-        Utils.printDebug("> PokemonData tests passed")
+        Utils.printDebug("[TEST] PokemonData tests passed")
     end
 end
 

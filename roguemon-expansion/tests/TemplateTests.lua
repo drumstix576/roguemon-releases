@@ -5,7 +5,7 @@ local TemplateTests = {
 }
 
 local function testTemplate()
-    -- Utils.printDebug(">> Testing unit test template")
+    -- Utils.printDebug("[TEST] Testing unit test template")
     local res = {}
     local reqParams = {
         "game",
@@ -24,7 +24,7 @@ local function testTemplate()
 end
 
 function TemplateTests.run()
-    Utils.printDebug("> Running template tests")
+    Utils.printDebug("[TEST] Running template tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -42,7 +42,7 @@ function TemplateTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] Template tests completed with failures (see above)")
     else
-        Utils.printDebug("> Template tests passed")
+        Utils.printDebug("[TEST] Template tests passed")
     end
 end
 

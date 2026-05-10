@@ -25,6 +25,9 @@ local TEST_MODULES = {
     "SpideySense",
     "SpecialInsight",
     "LogManager",
+    "LogVerify",
+    "ShopScreen",
+    "DataHelper",
 }
 
 -- Wrap a test function so that asserts inside it (and inside functions it calls)
@@ -53,7 +56,7 @@ function Tests.runTest(name, fn, arg)
     if #failures > 0 then
         Utils.printDebug("[WARN] Test %s failed:", name)
         for _, e in ipairs(failures) do
-            Utils.printDebug(">> %s", tostring(e))
+            Utils.printDebug("[TEST] %s", tostring(e))
         end
         return false
     end
@@ -113,6 +116,9 @@ function Tests.run(module)
         tests[name] = loadTest(name)
     end
 
+    local prevTopic = Roguemon.Core.Utils.debugTopics.TEST
+    Roguemon.Core.Utils.debugTopics.TEST = true
+
     if module ~= nil then
         local base = module:gsub("Tests$", "")
         if tests[base] and tests[base].run then
@@ -121,9 +127,10 @@ function Tests.run(module)
     else
         for _, name in ipairs(TEST_MODULES) do
             tests[name].run()
-            Utils.printDebug("")
         end
     end
+
+    Roguemon.Core.Utils.debugTopics.TEST = prevTopic
 end
 
 return Tests

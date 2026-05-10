@@ -1,6 +1,49 @@
+local DEBUG_TOPIC_DEFAULTS = {
+    ERROR = true,
+    WARN = true,
+
+    AI = false,
+    Checkpoint = false,
+    Curse = false,
+    DevTools = false,
+    Diag = false,
+    EvoSummary = false,
+    Item = false,
+    Patcher = false,
+    Prize = false,
+    Run = false,
+    SaveMigrator = false,
+    Segment = false,
+    Shop = false,
+    Startup = true,
+    TrackerAction = false,
+    TrackerEvent = false,
+    Update = false,
+    Watch = false,
+    Leaderboard = false,
+}
+
+local function loadDebugTopics()
+    local topics = {}
+    for k, v in pairs(DEBUG_TOPIC_DEFAULTS) do
+        topics[k] = v
+    end
+    local ok, overrides = pcall(dofile, FileManager.prependDir(
+        "extensions" .. FileManager.slash .. "roguemon-expansion" .. FileManager.slash .. "debug" .. FileManager.slash .. "DebugTopics.lua"))
+    if ok and type(overrides) == "table" then
+        for k, v in pairs(overrides) do
+            if DEBUG_TOPIC_DEFAULTS[k] ~= nil then
+                topics[k] = v
+            end
+        end
+    end
+    return topics
+end
+
 local self = {
     remap_complete = false,
     debugLevel = 2,
+    debugTopics = loadDebugTopics(),
 }
 
 function self.readGameVar(offset)
@@ -53,6 +96,13 @@ function self.printDebug(message, ...)
         message = string.format(message, ...)
     end
 
+    -- Topic-based filtering: suppress topics set to false in debugTopics
+    local topic = message:match("^%[(%w+)%]")
+    if topic and self.debugTopics[topic] == false then
+        return
+    end
+
+    -- Level-based filtering (for > and >> prefixes)
     local prefix = message:match("^%s*(>+)")
     local level  = prefix and #prefix or 0
 
@@ -66,6 +116,26 @@ function self.printDebug(message, ...)
     end
 end
 
+function self.saveDebugTopics()
+    local keys = {}
+    for k in pairs(self.debugTopics) do
+        keys[#keys + 1] = k
+    end
+    table.sort(keys)
+    local lines = { "return {" }
+    for _, k in ipairs(keys) do
+        lines[#lines + 1] = string.format("    %s = %s,", k, tostring(self.debugTopics[k]))
+    end
+    lines[#lines + 1] = "}\n"
+    local path = FileManager.prependDir(
+        "extensions" .. FileManager.slash .. "roguemon-expansion" .. FileManager.slash .. "debug" .. FileManager.slash .. "DebugTopics.lua")
+    local file = io.open(path, "w")
+    if file then
+        file:write(table.concat(lines, "\n"))
+        file:close()
+    end
+end
+
 function self.clearGameFlag(flagIdx)
     local flagAddr, flagBit = self.getFlagAddr(flagIdx)
     local curFlags = Memory.readbyte(flagAddr)
@@ -73,15 +143,31 @@ function self.clearGameFlag(flagIdx)
     Memory.writebyte(flagAddr, newFlags)
 end
 
--- Shift integer keys in a table by -17 for keys >= 30 (FRLG expansion layout offset).
--- Returns a new table; non-integer or low keys are copied unchanged.
+-- Remap a vanilla FRLG layout ID to the expansion ROM's layout ID.
+-- The expansion ROM removed 17 RSE-only layouts scattered throughout the
+-- vanilla layout table, causing a variable shift depending on position:
+--   Vanilla  1-20:  0 RSE removals before this range → shift  0
+--   Vanilla 21-28:  2 RSE removals (at positions 21, 22) → shift -2
+--   Vanilla 29-37:  3 RSE removals (+1 at position 30)  → shift -3
+--   Vanilla 38+:   17 RSE removals (all accounted for)  → shift -17
+-- No RouteData keys exist in the 38-76 gap, so the -17 shift at 38+ is
+-- exact for all actual FRLG data (keys 77+).
+local function vanillaToExpansionId(key)
+    if key >= 38 then return key - 17 end
+    if key >= 29 then return key - 3 end
+    if key >= 21 then return key - 2 end
+    return key
+end
+
+-- Remap integer keys in a table from vanilla FRLG layout IDs to expansion IDs.
+-- Returns a new table; non-integer keys are copied unchanged.
 local function remapTableKeys(tbl)
     if type(tbl) ~= "table" then return tbl end
     local out = {}
     for key, val in pairs(tbl) do
         local newKey = key
-        if type(key) == "number" and key >= 30 then
-            newKey = key - 17
+        if type(key) == "number" then
+            newKey = vanillaToExpansionId(key)
         end
         if out[newKey] == nil then
             out[newKey] = val
@@ -91,8 +177,8 @@ local function remapTableKeys(tbl)
 end
 
 -- Remap RouteData keys to account for layout index shifts.
--- The expansion ROM removes 17 RSE-only layouts that precede FRLG layouts in
--- vanilla, so vanilla FRLG layout IDs >= 30 need to be shifted by -17.
+-- The expansion ROM removes 17 RSE-only layouts scattered throughout the
+-- vanilla layout table, requiring a variable shift per key range.
 -- This also remaps RouteData.Locations and CombinedAreas tables.
 function self.remapRouteDataOffsets()
     if not RouteData or not RouteData.Info then
@@ -319,21 +405,48 @@ function self.readAsciiString(addr, maxLen)
     return table.concat(out)
 end
 
--- Calculate type effectiveness of atkType vs comparedTypes (handles dual types).
+-- Calculate type effectiveness of atkType vs comparedTypes (handles dual/triple types).
+-- getPokemonTypes guarantees: 2 types (may duplicate for mono-type) or 3 distinct types.
 local function calcTypeEffectiveness(atkType, comparedTypes)
     local total = 1.0
-    local eff = MoveData.TypeToEffectiveness[atkType] and MoveData.TypeToEffectiveness[atkType][comparedTypes[1]]
-    if eff ~= nil then
-        total = total * eff
-    end
+    local effTable = MoveData.TypeToEffectiveness[atkType]
+    if not effTable then return total end
+    local eff = effTable[comparedTypes[1]]
+    if eff then total = total * eff end
     if comparedTypes[2] ~= comparedTypes[1] then
-        eff = MoveData.TypeToEffectiveness[atkType] and MoveData.TypeToEffectiveness[atkType][comparedTypes[2]]
-        if eff ~= nil then
-            total = total * eff
-        end
+        eff = effTable[comparedTypes[2]]
+        if eff then total = total * eff end
+    end
+    if comparedTypes[3] then
+        eff = effTable[comparedTypes[3]]
+        if eff then total = total * eff end
     end
     return total
 end
+
+-- Moves whose damage is NOT multiplied by type effectiveness.
+-- These still respect immunities but should not show SE/NVE or STAB indicators.
+-- Distinct from "variable-power" moves (Low Kick, Gyro Ball) whose damage IS type-affected.
+local FixedDamageMoves = {
+    [12]  = true, -- Guillotine (OHKO)
+    [32]  = true, -- Horn Drill (OHKO)
+    [49]  = true, -- SonicBoom (fixed 20)
+    [68]  = true, -- Counter (reflect physical)
+    [69]  = true, -- Seismic Toss (level-based)
+    [82]  = true, -- Dragon Rage (fixed 40)
+    [90]  = true, -- Fissure (OHKO)
+    [101] = true, -- Night Shade (level-based)
+    [117] = true, -- Bide (reflect stored)
+    [149] = true, -- Psywave (random level-based)
+    [162] = true, -- Super Fang (50% HP)
+    [243] = true, -- Mirror Coat (reflect special)
+    [283] = true, -- Endeavor (HP difference)
+    [329] = true, -- Sheer Cold (OHKO)
+    [368] = true, -- Metal Burst (reflect 1.5x)
+    [671] = true, -- Nature's Madness (50% HP)
+    [820] = true, -- Comeuppance (reflect 1.5x)
+    [803] = true, -- Ruination (50% HP)
+}
 
 -- Override netEffectiveness to handle:
 -- 1. Variable-power moves (Electroball, Gyro Ball, etc.) — real effectiveness instead of neutral
@@ -352,11 +465,15 @@ function self.netEffectiveness(move, moveType, comparedTypes)
     end
 
     if move.category == MoveData.Categories.STATUS then
-        if MoveData.StatusMovesWillFail[id] ~= nil and (MoveData.StatusMovesWillFail[id][comparedTypes[1]] or MoveData.StatusMovesWillFail[id][comparedTypes[2]]) then
-            return 0.0
-        else
-            return 1.0
+        local failMap = MoveData.StatusMovesWillFail[id]
+        if failMap then
+            if failMap[comparedTypes[1]]
+                or (comparedTypes[2] ~= comparedTypes[1] and failMap[comparedTypes[2]])
+                or (comparedTypes[3] and failMap[comparedTypes[3]]) then
+                return 0.0
+            end
         end
+        return 1.0
     end
 
     local moveId = tonumber(move.id) or 0
@@ -371,17 +488,17 @@ function self.netEffectiveness(move, moveType, comparedTypes)
     -- Freeze Dry (573): super effective (2x) against Water, normal Ice effectiveness otherwise
     if moveId == 573 then
         local total = 1.0
-        for i = 1, 2 do
-            local defType = comparedTypes[i]
-            if i == 2 and defType == comparedTypes[1] then break end
-            if defType == PokemonData.Types.WATER then
-                total = total * 2.0
-            else
-                local eff = MoveData.TypeToEffectiveness[moveType] and MoveData.TypeToEffectiveness[moveType][defType]
-                if eff ~= nil then
-                    total = total * eff
-                end
-            end
+        local effLookup = MoveData.TypeToEffectiveness[moveType]
+        local function freezeDryEff(defType)
+            if defType == PokemonData.Types.WATER then return 2.0 end
+            return (effLookup and effLookup[defType]) or 1.0
+        end
+        total = total * freezeDryEff(comparedTypes[1])
+        if comparedTypes[2] ~= comparedTypes[1] then
+            total = total * freezeDryEff(comparedTypes[2])
+        end
+        if comparedTypes[3] then
+            total = total * freezeDryEff(comparedTypes[3])
         end
         return total
     end
@@ -391,12 +508,18 @@ function self.netEffectiveness(move, moveType, comparedTypes)
 
     -- Thousand Arrows (614): neutral against targets with Flying type
     if moveId == 614 then
-        local hasFlying = comparedTypes[1] == PokemonData.Types.FLYING
-            or (comparedTypes[2] ~= comparedTypes[1] and comparedTypes[2] == PokemonData.Types.FLYING)
-        if hasFlying then
+        if comparedTypes[1] == PokemonData.Types.FLYING
+            or comparedTypes[2] == PokemonData.Types.FLYING
+            or (comparedTypes[3] and comparedTypes[3] == PokemonData.Types.FLYING) then
             return 1.0
         end
         return total
+    end
+
+    -- Fixed-damage moves: only show immunity (0), suppress SE/NVE
+    if FixedDamageMoves[moveId] then
+        if total == 0.0 then return 0.0 end
+        return 1.0
     end
 
     -- Variable-power moves deal type-based damage; return real effectiveness
@@ -404,7 +527,7 @@ function self.netEffectiveness(move, moveType, comparedTypes)
         return total
     end
 
-    -- Fixed-damage moves (Dragon Rage, Fissure, etc.) check immunities only
+    -- Other zero-power moves: check immunities only
     if (move.power == "0" or move.power == Constants.BLANKLINE) and total ~= 0.0 then
         return 1.0
     end
@@ -424,7 +547,13 @@ function self.isSTAB(move, moveType, comparedTypes)
         return false
     end
 
-    -- Only skip STAB for fixed-damage moves, not variable-power moves
+    -- Skip STAB for fixed-damage moves (Dragon Rage, OHKO, etc.)
+    local moveId = tonumber(move.id) or 0
+    if FixedDamageMoves[moveId] then
+        return false
+    end
+
+    -- Skip STAB for other zero-power moves, but not variable-power moves
     if not move.variablepower and (move.power == "0" or move.power == Constants.BLANKLINE) then
         return false
     end
@@ -473,6 +602,75 @@ function self.calculateTrumpCardPower(remainingPP)
     local powerTable = { [0] = 200, 80, 60, 50, 40 }
     if remainingPP >= 4 then remainingPP = 4 end
     return tostring(powerTable[remainingPP])
+end
+
+function self.dumpTable(t, indent, seen)
+    indent = indent or ""
+    seen = seen or {}
+    if seen[t] then return indent .. "<cycle>\n" end
+    seen[t] = true
+    local lines = {}
+    for k, v in pairs(t) do
+        local key = string.format("[%s]", tostring(k))
+        if type(v) == "table" then
+            table.insert(lines, string.format("%s%s = {\n%s}", indent, key, Utils.dumpTable(v, indent .. "  ", seen)))
+        else
+            table.insert(lines, string.format("%s%s = %s", indent, key, tostring(v)))
+        end
+    end
+    if indent ~= "" then
+        return table.concat(lines, "\n") .. "\n" .. indent:sub(1, -3) .. "}\n"
+    else
+        return table.concat(lines, "\n")
+    end
+end
+
+function self.hexDump(addr, count)
+	local bytesPerLine = 16
+	for offset = 0, count - 1, bytesPerLine do
+		local hexParts, asciiParts, bytes = {}, {}, {}
+
+		-- Read the bytes for this line once
+		for i = 0, bytesPerLine - 1 do
+			local idx = offset + i
+			if idx < count then
+				bytes[i + 1] = Memory.readbyte(addr + idx) or 0
+			end
+		end
+
+		-- Build hex output in 2-byte groups: "00e2 5208 ..."
+		for i = 1, bytesPerLine, 2 do
+			local b1 = bytes[i]
+			local b2 = bytes[i + 1]
+			if b1 ~= nil then
+				if b2 ~= nil then
+					table.insert(hexParts, string.format("%02x%02x", b1, b2))
+				else
+					table.insert(hexParts, string.format("%02x  ", b1))
+				end
+			else
+				table.insert(hexParts, "    ")
+			end
+		end
+
+		-- Build ASCII column
+		for i = 1, bytesPerLine do
+			local byte = bytes[i]
+			if byte ~= nil then
+				asciiParts[i] = (byte >= 32 and byte <= 126) and string.char(byte) or "."
+			else
+				asciiParts[i] = " "
+			end
+		end
+
+		print(string.format("%08x: %s  %s", addr + offset, table.concat(hexParts, " "), table.concat(asciiParts)))
+	end
+end
+
+-- Override: Expansion ROM uses contiguous IDs with no 252-276 gap.
+function self.randomPokemonID(maxPokemonId)
+    maxPokemonId = math.min(PokemonData.getTotal(), maxPokemonId or 99999)
+    return math.random(maxPokemonId)
 end
 
 -- Initialize route data mapping when module is loaded

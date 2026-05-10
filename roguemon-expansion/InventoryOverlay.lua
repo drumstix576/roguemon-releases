@@ -8,10 +8,26 @@ local self = {
     lastPocketAddr = nil,
 }
 
-local IMAGE_SIZE = 32
-local IMAGE_GAP = 30
+local IMAGE_SIZE_LARGE = 32
+local IMAGE_GAP_LARGE = 30
+local IMAGE_SIZE_SMALL = 20
+local IMAGE_GAP_SMALL = 18
 local ORIGIN_X = 0
 local ORIGIN_Y = 0
+
+local function getImageSize()
+    if Options and Options["Display small prizes"] then
+        return IMAGE_SIZE_SMALL
+    end
+    return IMAGE_SIZE_LARGE
+end
+
+local function getImageGap()
+    if Options and Options["Display small prizes"] then
+        return IMAGE_GAP_SMALL
+    end
+    return IMAGE_GAP_LARGE
+end
 
 local function isBattleActive()
     if Battle.inActiveBattle then
@@ -91,11 +107,12 @@ local function openInventoryScreen()
 end
 
 local function drawEntry(entry, index, screen)
+    local size = getImageSize()
     if entry.renderOverlayIcon then
         entry:renderOverlayIcon({
             x = entry.x,
             y = entry.y,
-            size = IMAGE_SIZE,
+            size = size,
             imagesDir = Roguemon.Paths.IMAGES_DIRECTORY,
         })
     end
@@ -103,7 +120,7 @@ local function drawEntry(entry, index, screen)
     if screen and screen.Buttons then
         screen.Buttons[self.buttonPrefix .. index] = {
             type = Constants.ButtonTypes.NO_BORDER,
-            box = { entry.x, entry.y, IMAGE_SIZE, IMAGE_SIZE },
+            box = { entry.x, entry.y, size, size },
             onClick = function()
                 openInventoryScreen()
             end,
@@ -113,6 +130,9 @@ end
 
 function self.draw()
     if not Program or not Main.IsOnBizhawk() then
+        return
+    end
+    if Options and Options["Display prizes on screen"] == false then
         return
     end
     if not Program.isValidMapLocation() then
@@ -154,11 +174,12 @@ function self.draw()
     end
 
     local x = ORIGIN_X
+    local gap = getImageGap()
     for i, entry in ipairs(self.cachedEntries or {}) do
         entry.x = x
         entry.y = ORIGIN_Y
         drawEntry(entry, i, screen)
-        x = x + IMAGE_GAP
+        x = x + gap
     end
 end
 

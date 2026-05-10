@@ -1,5 +1,15 @@
 local self = {}
 
+function self.drawButton(button, ...)
+    if button and button.boxColors == nil then
+        button.boxColors = { "Upper box border", "Upper box background" }
+    end
+    local original = _G.__roguemonCoreOriginals and _G.__roguemonCoreOriginals["Drawing.drawButton"]
+    if original then
+        return original(button, ...)
+    end
+end
+
 function self.drawTrainerTeamPokeballs(x, y, shadowcolor)
 	local image
 	local againstGiovanni = TrainerData.isGiovanni(Battle.opposingTrainerId)

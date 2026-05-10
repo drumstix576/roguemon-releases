@@ -227,7 +227,7 @@ local function hasEmptyPocketSlot(pocketId)
 end
 
 local function testSubmitPrizeTasks()
-    -- Utils.printDebug(">> Testing prize pending task submissions")
+    -- Utils.printDebug("[TEST] Testing prize pending task submissions")
     withRestores(function(_, stubField)
         local pm = Roguemon.PrizeManager
         local calls = {}
@@ -249,7 +249,7 @@ local function testSubmitPrizeTasks()
 end
 
 local function testOpenQueueScreenRouting()
-    -- Utils.printDebug(">> Testing prize queue screen routing")
+    -- Utils.printDebug("[TEST] Testing prize queue screen routing")
     withRestores(function(stubGlobal, stubField)
         local pm = Roguemon.PrizeManager
         local screens = {
@@ -292,7 +292,7 @@ local function testOpenQueueScreenRouting()
 end
 
 local function testBoosterShotMoveFiltering()
-    -- Utils.printDebug(">> Testing booster shot move filtering")
+    -- Utils.printDebug("[TEST] Testing booster shot move filtering")
     if shouldSkipBoosterShotTest() then
         return true
     end
@@ -509,7 +509,7 @@ local function testProcessUpdateNavigatesDuringNonIdleFlow()
 end
 
 local function testOfferPrizeQueuesSelection()
-    -- Utils.printDebug(">> Testing prize offer queues selection")
+    -- Utils.printDebug("[TEST] Testing prize offer queues selection")
     assert(resetPrizeState(), "Unable to reset prize state before test")
     clearRoguemonItemByName("Armor Plating")
     clearRoguemonItemByName("Booster Shot")
@@ -533,7 +533,7 @@ local function testOfferPrizeQueuesSelection()
 end
 
 local function testSelectPrizeAddsItems()
-    -- Utils.printDebug(">> Testing prize selection adds items to bag")
+    -- Utils.printDebug("[TEST] Testing prize selection adds items to bag")
     assert(resetPrizeState(), "Unable to reset prize state before test")
     clearRoguemonItemByName("Armor Plating")
     clearRoguemonItemByName("Booster Shot")
@@ -585,7 +585,7 @@ local function testSelectPrizeAddsItems()
 end
 
 local function testRejectOwnedPrize()
-    -- Utils.printDebug(">> Testing prize rejection for owned key item")
+    -- Utils.printDebug("[TEST] Testing prize rejection for owned key item")
     assert(resetPrizeState(), "Unable to reset prize state before test")
     local pm = Roguemon.PrizeManager
     assert(pm ~= nil, "PrizeManager missing")
@@ -792,7 +792,7 @@ local function testSelectionWatchRequiresChangeCounterAdvance()
 end
 
 function PrizeManagerTests.run()
-    Utils.printDebug("> Running PrizeManager tests")
+    Utils.printDebug("[TEST] Running PrizeManager tests")
     local tests = Roguemon.Tests
 
     local results = {
@@ -821,7 +821,7 @@ function PrizeManagerTests.run()
     if not allPassed then
         Utils.printDebug("[WARN] PrizeManager tests completed with failures (see above)")
     else
-        Utils.printDebug("> PrizeManager tests passed")
+        Utils.printDebug("[TEST] PrizeManager tests passed")
     end
 end
 
