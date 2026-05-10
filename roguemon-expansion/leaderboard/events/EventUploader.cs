@@ -36,7 +36,7 @@ namespace RogueMon.EventUploader
         // Selectable at launch via -t / --target {prod|dev|local}. Defaults to
         // prod. Set in Main from ParseTarget; treated as immutable thereafter.
         const string HandlerUrlProd  = "https://roguemonevent-handler-production.up.railway.app";
-        const string HandlerUrlDev   = "https://roguemonevent-handler-dev.up.railway.app/";
+        const string HandlerUrlDev   = "https://roguemonevent-handler-dev.up.railway.app";
         const string HandlerUrlLocal = "http://127.0.0.1:3000";
         static string HandlerUrl = HandlerUrlProd;
 
@@ -425,6 +425,7 @@ namespace RogueMon.EventUploader
         {
             try
             {
+                Console.WriteLine("Handler Url: " + HandlerUrl + "/run");
                 Console.WriteLine("Uploading event:  " + queryString);
                 var body = new StringContent(
                     "payload=" + Uri.EscapeDataString(queryString),

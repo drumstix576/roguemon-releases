@@ -249,4 +249,60 @@ function self.fixAudioBuffer()
     return true
 end
 
+-- ----------------------------------------------------------------------------
+-- Console-origin guard: taints the run's leaderboard eligibility if a
+-- run-modifying Api function is called from the BizHawk Lua console. These
+-- entry points are documented for dev/testing; calling them mid-run from the
+-- console should not produce leaderboard-eligible results.
+--
+-- Detection: walk the stack to its outermost Lua frame and check `source`.
+-- Per Lua's reference, source starts with '@' only for chunks loaded from a
+-- file (dofile/loadfile). Console input is loaded as a string and produces
+-- '=...' or '[string ...]'. C frames are skipped so `dofile('x.lua')` typed
+-- in the console still resolves to the console chunk above the dofile call.
+-- Sophisticated bypasses (forged chunknames via load(..., '@x'), Open Script,
+-- replacing this wrapper) are out of scope by design — this is a casual
+-- deterrent paired with the documentation that flags these as dev-only.
+local RUN_MODIFYING_API_FUNCS = {
+    "setLevel",
+    "learnMove",
+    "equipItem",
+    "setNature",
+    "toggleAbility",
+    "giveItem",
+    "setPCDisabled",
+}
+
+local function callOriginIsConsole()
+    local outermost
+    local i = 2  -- skip this frame
+    while true do
+        local info = debug.getinfo(i, "S")
+        if not info then break end
+        if info.what ~= "C" then
+            outermost = info
+        end
+        i = i + 1
+    end
+    if not outermost then return false end
+    return (outermost.source or ""):sub(1, 1) ~= "@"
+end
+
+for _, name in ipairs(RUN_MODIFYING_API_FUNCS) do
+    local orig = self[name]
+    self[name] = function(...)
+        if callOriginIsConsole() then
+            local msg = string.format(
+                "[Roguemon] Console-originated call to Roguemon.Api.%s detected; leaderboard disabled for this run.",
+                name)
+            print(msg)
+            Utils.printDebug(msg)
+            if Roguemon.Leaderboard then
+                Roguemon.Leaderboard.disabled = true
+            end
+        end
+        return orig(...)
+    end
+end
+
 return self
