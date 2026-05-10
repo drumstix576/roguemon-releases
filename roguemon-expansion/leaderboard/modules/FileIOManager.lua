@@ -69,6 +69,17 @@ function self.writeEventsToFile(data)
   return true
 end
 
+function self.saveUserInfo(username, deviceToken)
+  local file = io.open(userInfoFilePath, "w+")
+  if not file then
+    return false
+  end
+  file:write("USERNAME=" .. username .. "\n")
+  file:write("DEVICE_TOKEN=" .. deviceToken .. "\n")
+  file:close()
+  return true
+end
+
 -- Reads roguemon_leaderboard_userinfo.txt and returns (username, secret, deviceToken).
 -- Any of the three may be nil. The leaderboard accepts either auth path; the
 -- caller decides which to send. SECRET is the legacy bcrypt-hashed credential;
