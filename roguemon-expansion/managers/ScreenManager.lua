@@ -249,6 +249,12 @@ function self.queueDeferredSubmission(screen, submitFn)
     if not screen or type(submitFn) ~= "function" then
         return false
     end
+    -- A submission is already in flight; rejecting the duplicate keeps the
+    -- "Waiting for dialog to close..." label truthful and prevents stale
+    -- SET_PENDING_RESULT commands from racing the ROM's queue advancement.
+    if screen._deferredPending then
+        return false
+    end
     screen._deferredPending = true
     screen._deferredLabel = false
     local ok = submitFn()

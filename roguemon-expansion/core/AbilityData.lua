@@ -77,12 +77,6 @@ function self.updateResources()
         ["Well-Baked Body"]  = "WellBakedBodyId",
         ["Wind Rider"]       = "WindRiderId",
         ["Earth Eater"]      = "EarthEaterId",
-        -- Type-changing abilities
-        ["Pixilate"]         = "PixilateId",
-        ["Refrigerate"]      = "RefrigerateId",
-        ["Aerilate"]         = "AerilateId",
-        ["Galvanize"]        = "GalvanizeId",
-        ["Normalize"]        = "NormalizeId",
     }
 
     for id = 1, abilitiesCount do
