@@ -73,76 +73,10 @@ local function applyItemTypeOverrides(data)
     return changed
 end
 
--- Moves excluded from ability-based type changes (-ate / Normalize)
--- Matches ROM's TrySetAteType exclusions + GetDynamicMoveType Normalize exclusions
-local ABILITY_RETYPE_SKIP_IDS = {
-    [165] = true,   -- Struggle
-    [237] = true,   -- Hidden Power
-    [311] = true,   -- Weather Ball
-    [363] = true,   -- Natural Gift
-    [449] = true,   -- Judgment
-    [546] = true,   -- Techno Blast
-    [649] = true,   -- Revelation Dance
-    [672] = true,   -- Multi-Attack
-    [733] = true,   -- Terrain Pulse
-    [779] = true,   -- Tera Blast
-}
-
-local ateAbilityTypeCache
-
-local function getAteAbilityTypes()
-    if ateAbilityTypeCache then return ateAbilityTypeCache end
-    local V = AbilityData.Values
-    ateAbilityTypeCache = {}
-    if V.PixilateId    then ateAbilityTypeCache[V.PixilateId]    = PokemonData.Types.FAIRY    end
-    if V.RefrigerateId then ateAbilityTypeCache[V.RefrigerateId] = PokemonData.Types.ICE      end
-    if V.AerilateId    then ateAbilityTypeCache[V.AerilateId]    = PokemonData.Types.FLYING   end
-    if V.GalvanizeId   then ateAbilityTypeCache[V.GalvanizeId]   = PokemonData.Types.ELECTRIC end
-    return ateAbilityTypeCache
-end
-
-local function applyAteAbilityTypes(data)
-    local pokemon = Tracker.getViewedPokemon()
-    if not pokemon then return false end
-    local abilityId = PokemonData.getAbilityId(pokemon.pokemonID, pokemon.abilityNum)
-    if not abilityId or abilityId == 0 then return false end
-    local newType = getAteAbilityTypes()[abilityId]
-    if not newType then return false end
-    local changed = false
-    for _, move in ipairs(data.m.moves or {}) do
-        if move.id and move.id > 0
-            and move.category ~= MoveData.Categories.STATUS
-            and move.type == PokemonData.Types.NORMAL
-            and not ABILITY_RETYPE_SKIP_IDS[move.id]
-        then
-            move.type = newType
-            changed = true
-        end
-    end
-    return changed
-end
-
--- Normalize: all moves become Normal-type (ROM's GetDynamicMoveType, lines 5858-5869)
-local function applyNormalizeType(data)
-    local pokemon = Tracker.getViewedPokemon()
-    if not pokemon then return false end
-    local abilityId = PokemonData.getAbilityId(pokemon.pokemonID, pokemon.abilityNum)
-    if not abilityId or abilityId == 0 then return false end
-    local V = AbilityData.Values
-    if not V.NormalizeId or abilityId ~= V.NormalizeId then return false end
-    local changed = false
-    for _, move in ipairs(data.m.moves or {}) do
-        if move.id and move.id > 0
-            and move.category ~= MoveData.Categories.STATUS
-            and move.type ~= PokemonData.Types.NORMAL
-            and not ABILITY_RETYPE_SKIP_IDS[move.id]
-        then
-            move.type = PokemonData.Types.NORMAL
-            changed = true
-        end
-    end
-    return changed
-end
+-- -ate ability and Normalize move retyping is handled ROM-side via the
+-- dynamic-moves snapshot (applyDynamicMoveOverrides), which composes the
+-- resolved type with field overrides (Electrify, Ion Deluge), the Charge
+-- volatile, and matches the ROM's exact ordering. Don't reimplement it here.
 
 -- Distorted Heart: move type scrambling (mirrors ROM's GetDistortedHeartMoveType)
 local DISTORTED_SKIP_IDS = {
@@ -417,11 +351,9 @@ function self.buildTrackerScreenDisplay(...)
     end
 
     local itemTypeChanged = applyItemTypeOverrides(data)
-    local ateTypeChanged = applyAteAbilityTypes(data)
-    local normalizeChanged = applyNormalizeType(data)
     local typesChanged = applyDistortedHeartTypes(data)
 
-    if (itemTypeChanged or ateTypeChanged or normalizeChanged or typesChanged or dynamicChanged) and Battle.inActiveBattle() then
+    if (itemTypeChanged or typesChanged or dynamicChanged) and Battle.inActiveBattle() then
         local targetInfo = Battle.getDoublesCursorTargetInfo()
         local enemyTypes = Program.getPokemonTypes(targetInfo.isOwner, targetInfo.isLeft)
         local ownTypes = Program.getPokemonTypes(data.x.viewingOwn, Battle.isViewingLeft)

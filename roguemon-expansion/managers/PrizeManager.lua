@@ -28,6 +28,7 @@ local PRIZE_TASK_MINT_BOOST = 9
 local PRIZE_TASK_MINT_NERF = 10
 local PRIZE_TASK_ROGUESTONE = 11
 local PRIZE_TASK_CLAIRVOYANCE = 12
+local PRIZE_TASK_EV_RESET = 13
 local PRIZE_FLAG_PENDING_ANY = 0x01
 local PRIZE_FLAG_PENDING_RESULT = 0x02
 local PRIZE_FLAG_REJECTED = 0x04
@@ -49,6 +50,7 @@ self.Tasks = {
     MINT_NERF = PRIZE_TASK_MINT_NERF,
     ROGUESTONE = PRIZE_TASK_ROGUESTONE,
     CLAIRVOYANCE = PRIZE_TASK_CLAIRVOYANCE,
+    EV_RESET = PRIZE_TASK_EV_RESET,
 }
 
 function self.isFlowIdle(state)
@@ -300,7 +302,7 @@ function self.loadPrizeModules()
     registerTaskScreen(self, PRIZE_TASK_CHOICE, "PrizeChoiceScreen")
 
     local baseDir = Roguemon.extensionDir .. "prizes" .. FileManager.slash
-    local moduleNames = { "ArmorPlating", "BoosterShot", "HyperTraining", "NatureMint", "AncestralGift", "PotionInvestment", "Roguestone", "TeraOrb", "Clairvoyance" }
+    local moduleNames = { "ArmorPlating", "BoosterShot", "HyperTraining", "NatureMint", "AncestralGift", "PotionInvestment", "Roguestone", "TeraOrb", "Clairvoyance", "EvBoostItem", "EvReset" }
     for _, name in ipairs(moduleNames) do
         local path = baseDir .. name .. ".lua"
         local ok, modOrFactory = pcall(dofile, path)
@@ -768,6 +770,23 @@ function self.getChoiceOverrides(prizeId, state)
     return nil, nil
 end
 
+function self.getChoiceLabel(prizeId, itemId, itemName, state)
+    if prizeId == nil then
+        return nil
+    end
+    self.loadPrizeModules()
+    local def = self.PrizeDefsById and self.PrizeDefsById[prizeId] or nil
+    for _, module in ipairs(self.PrizeModules or {}) do
+        if module.getChoiceLabel then
+            local ok, label = pcall(module.getChoiceLabel, self, def, state, itemId, itemName)
+            if ok and label ~= nil then
+                return label
+            end
+        end
+    end
+    return nil
+end
+
 function self.rejectPrizeSelection(prizeId, reason)
     -- Validate it's safe to write to save data
     local canWrite, writeReason = Roguemon.Core.Utils.canSafelyWriteToSave()
@@ -1102,6 +1121,14 @@ function self.submitHyperTrainingStat(statId)
         return false
     end
     return self.setPendingResult(PRIZE_TASK_HYPER, statId, 0)
+end
+
+function self.submitEvReset(mask)
+    if mask == nil then
+        Utils.printDebug("[WARN] PrizeManager: invalid EV reset mask")
+        return false
+    end
+    return self.setPendingResult(PRIZE_TASK_EV_RESET, mask, 0)
 end
 
 function self.submitArmorPlatingMode(mode)

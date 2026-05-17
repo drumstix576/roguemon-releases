@@ -92,9 +92,11 @@ function self.refreshChoices()
     local source = overrides ~= nil and overrides or (def and def.choices)
     if source then
         for _, itemId in ipairs(source) do
+            local name = getChoiceName(itemId)
+            local label = self.PrizeManager.getChoiceLabel(prizeId, itemId, name, state)
             list[#list + 1] = {
                 id = itemId,
-                name = getChoiceName(itemId),
+                name = label or name,
             }
         end
     end

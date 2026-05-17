@@ -116,18 +116,21 @@ local IS_WINDOWS = package.config:sub(1, 1) == "\\"
 -- nil, the uploader uses its own prod default.
 function self.launchEventUploader(target)
   local sanitizedPath = eventUploaderFilePath:gsub("'", "''")
+  local sanitizedEventsPath = eventsPath:gsub("'", "''")
   if IS_WINDOWS then
     -- PowerShell Start-Process: pass args via -ArgumentList as a list so
     -- additional flags with whitespace would still tokenize correctly.
+    -- -WorkingDirectory pins CWD to events/ so the loader doesn't pick up
+    -- BizHawk-bundled DLLs as CLR dependencies and fail with 0xc0000142.
     if target then
       os.execute(string.format(
-        [[powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%s' -ArgumentList '--target','%s'"]],
-        sanitizedPath, target
+        [[powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%s' -WorkingDirectory '%s' -ArgumentList '--target','%s'"]],
+        sanitizedPath, sanitizedEventsPath, target
       ))
     else
       os.execute(string.format(
-        [[powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%s'"]],
-        sanitizedPath
+        [[powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%s' -WorkingDirectory '%s'"]],
+        sanitizedPath, sanitizedEventsPath
       ))
     end
   else

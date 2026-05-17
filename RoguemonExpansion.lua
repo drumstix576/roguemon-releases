@@ -288,6 +288,7 @@ local function RoguemonExpansionExtension()
         ChecklistScreen = "ChecklistScreen.lua",
         CleansingReminderScreen = "CleansingReminderScreen.lua",
         HyperTrainingScreen = "HyperTrainingScreen.lua",
+        EvResetScreen = "EvResetScreen.lua",
         ArmorPlatingScreen = "ArmorPlatingScreen.lua",
         BoosterShotModeScreen = "BoosterShotModeScreen.lua",
         BoosterShotMoveScreen = "BoosterShotMoveScreen.lua",

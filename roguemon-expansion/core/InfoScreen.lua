@@ -77,6 +77,21 @@ local function drawCurseInfoScreen(curseId)
 		end
 	end
 
+	-- Debilitation stat delta for the chosen mon (natural -> debilitated).
+	if CurseManager and curseId == CurseManager.CurseId.DEBILITATION then
+		local snap = CurseManager.readDebilitationSnapshot()
+		if snap then
+			offsetY = offsetY + linespacing
+			Drawing.drawText(offsetX, offsetY,
+				string.format("Atk: %d -> %d", snap.naturalAtk, snap.currentAtk),
+				Theme.COLORS["Default text"], boxInfoTopShadow)
+			offsetY = offsetY + linespacing
+			Drawing.drawText(offsetX, offsetY,
+				string.format("SpA: %d -> %d", snap.naturalSpA, snap.currentSpA),
+				Theme.COLORS["Default text"], boxInfoTopShadow)
+		end
+	end
+
 	Drawing.drawButton(InfoScreen.Buttons.BackTop, boxInfoTopShadow)
 end
 

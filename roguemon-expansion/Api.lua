@@ -190,6 +190,13 @@ function self.setBgmMode(mode)
     return enqueue(Roguemon.TrackerCommandManager.Commands.SET_BGM_MODE, mode, 0, 0)
 end
 
+-- Enabled reduced battle animations (vanilla-rate trainer slide + no post-KO
+-- victory bounce). 
+function self.setReduceAnimations(enabled)
+    local on = (enabled == true or enabled == 1) and 1 or 0
+    return enqueue(Roguemon.TrackerCommandManager.Commands.SET_REDUCE_ANIMATIONS, on, 0, 0)
+end
+
 function self.setToken(token)
     if not Roguemon.UpdateChecker then
         Utils.printDebug("[WARN] Roguemon.Api.setToken: UpdateChecker unavailable")

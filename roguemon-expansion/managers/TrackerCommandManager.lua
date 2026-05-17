@@ -21,6 +21,7 @@ local self = {
         SHOP_STAGE_DELTA = 19,
         SHOP_STAGE_FLUSH = 20,
         SHOP_STAGE_PURGE = 21,
+        SET_REDUCE_ANIMATIONS = 22,
     },
     -- Checklist step bits (must match ROM ROGUEMON_CHECKLIST_* in constants/roguemon.h)
     ChecklistSteps = {

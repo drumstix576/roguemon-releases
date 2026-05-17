@@ -246,6 +246,31 @@ function self.isCurseActive(state)
     return self.getActiveCurseId(state) ~= self.CurseId.NONE
 end
 
+-- Snapshot written by ROM in OnCurseActivated for CURSE_ID_DEBILITATION:
+-- 4 u16s packed into RoguemonTrackerData.curseData — chosen mon's natural
+-- and live ATK/SpA. Returns nil if the snapshot is cleared (all zeros).
+function self.readDebilitationSnapshot()
+    local base = GameSettings.roguemonTrackerDataAddr
+    local offset = GameSettings.roguemonTrackerCurseDataOffset
+    if not base or base == 0 or not offset then
+        return nil
+    end
+    local addr = base + offset
+    local naturalAtk = Memory.readword(addr)
+    local naturalSpA = Memory.readword(addr + 2)
+    local currentAtk = Memory.readword(addr + 4)
+    local currentSpA = Memory.readword(addr + 6)
+    if naturalAtk == 0 and naturalSpA == 0 and currentAtk == 0 and currentSpA == 0 then
+        return nil
+    end
+    return {
+        naturalAtk = naturalAtk,
+        naturalSpA = naturalSpA,
+        currentAtk = currentAtk,
+        currentSpA = currentSpA,
+    }
+end
+
 -- Cached Clairvoyance item ID (looked up from MiscData.Items by name)
 local clairvoyanceItemId = nil
 
