@@ -107,8 +107,8 @@ function self.collectAndWriteRunData(actionCode, currentTrainer)
   info.pokemon_id    = pokemon.pokemonID
 
   local dataString = self.buildDataString(info)
-  Utils.printDebug("[Leaderboard] Writing %s event to events.txt: %s", actionName, dataString)
-  FileIOManager.writeEventsToFile(dataString)
+  Utils.printDebug("[Leaderboard] Uploading %s event: %s", actionName, dataString)
+  FileIOManager.uploadEvent(dataString)
 end
 
 return self

@@ -477,30 +477,21 @@ function self.registerTrackerActions(actionManager)
     end)
 end
 
-local function getGymTmMoveId()
-    local base = GameSettings.roguemonTrackerDataAddr
-    local moveOff = GameSettings.roguemonTrackerChecklistGymTmMoveIdOffset
-    if not base or not moveOff then return 0 end
-    return Memory.readword(base + moveOff) or 0
-end
-
 function self.handleItemObtained(itemId)
     if not itemId or itemId == 0 then return end
     if self.getItemPocket(itemId) == self.Pocket.PokeBalls then return end
     if Options and Options["Show reminders"] == false then return end
 
-    -- TM items: always show the move info screen regardless of "Show item descriptions"
+    -- TM items: always show the move info screen regardless of "Show item descriptions".
+    -- The ROM gates this raise on the "Mask Gym TM names" setting (it never raises
+    -- ITEM_OBTAINED for a gym-leader TM when masking is on), so no filter here.
     local tmStart = GameSettings.TMItemStartIndex
     local tmCount = GameSettings.tmCount
     if tmStart and tmCount and itemId >= tmStart and itemId < tmStart + tmCount then
         local tmNum = itemId - tmStart + 1
         local moveId = Program.getMoveIdFromTMHMNumber(tmNum)
         if moveId and moveId > 0 then
-            local isGymTm = moveId == getGymTmMoveId()
-            local maskGym = Options and Options["Mask Gym TM names"] == true
-            if not (isGymTm and maskGym) then
-                Roguemon.ScreenManager.showMoveInfo(moveId)
-            end
+            Roguemon.ScreenManager.showMoveInfo(moveId)
             return
         end
     end

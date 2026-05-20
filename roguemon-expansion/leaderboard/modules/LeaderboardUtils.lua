@@ -20,9 +20,8 @@ local function saveCredentials(credentialKey)
     if decoded and decoded:find(":") then
       local username, deviceToken = decoded:match("^(.+):(.+)$")
       Roguemon.Leaderboard.FileIOManager.saveUserInfo(username, deviceToken)
-      local target = Roguemon.Leaderboard.resolveLeaderboardTarget()
-      Utils.printDebug("[Leaderboard] Credentials saved. Launching uploader with target=%s (build=%s)", target, GameSettings.roguemonVersionStr or "?")
-      Roguemon.Leaderboard.FileIOManager.launchEventUploader(target)
+      Utils.printDebug("[Leaderboard] Credentials saved; re-initializing leaderboard")
+      Roguemon.Leaderboard.init()
     end
   end
 end

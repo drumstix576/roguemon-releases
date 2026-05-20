@@ -271,10 +271,6 @@ local function RoguemonExpansionExtension()
     self.LoaderUtils       = safeLoad(self.extensionDir .. "LoaderUtils.lua")
     self.Tests             = safeLoad(self.extensionDir .. "Tests.lua")
     self.GameSettings      = safeLoad(self.extensionDir .. "GameSettings.lua")  -- auto-generated
-    -- BEGIN DEV-ONLY (stripped from beta/public release packages by release/Makefile)
-    self.DevTools          = safeLoad(self.extensionDir .. "DevTools.lua")
-    self.DevCheckpoints    = safeLoad(self.extensionDir .. "DevCheckpoints.lua")
-    -- END DEV-ONLY
 
     -- Leaderboard
     self.Leaderboard       = safeLoad(self.extensionDir .. "leaderboard" .. FileManager.slash .. "RoguemonLeaderboard.lua")
@@ -343,10 +339,12 @@ local function RoguemonExpansionExtension()
         self.checkForUpdates = function()
             return self.UpdateChecker.checkForUpdates(self)
         end
-        -- Default to public branch (release repo has no "main" branch).
+        -- Default to the main branch (matches the core tracker's hardcoded
+        -- DefaultBranch used by the install-from-URL form, so the bootstrap
+        -- branch and the auto-update branch are the same).
         -- checkForUpdates() overrides this dynamically based on beta opt-in.
         self.downloadAndInstallUpdate = function()
-            return TrackerAPI.updateExtension("RoguemonExpansion", {}, {}, "public")
+            return TrackerAPI.updateExtension("RoguemonExpansion", {}, {}, "main")
         end
         -- Patch download commands to inject auth for private repo access.
         self.UpdateChecker.patchDownloadAuth()
