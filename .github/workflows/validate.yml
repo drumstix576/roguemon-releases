@@ -5,7 +5,7 @@ name: Validate Release
 on:
   pull_request:
     branches:
-      - public
+      - main
       - beta
 
 jobs:

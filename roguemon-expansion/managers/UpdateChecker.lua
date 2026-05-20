@@ -143,7 +143,7 @@ function UpdateChecker._checkStable(ext, github, currentVersion)
     local versionPattern = '"tag_name":%s*"(v[%d%.]+)"'
 
     ext.downloadAndInstallUpdate = function()
-        return TrackerAPI.updateExtension("RoguemonExpansion", {}, {}, "public")
+        return TrackerAPI.updateExtension("RoguemonExpansion", {}, {}, "main")
     end
 
     -- Update check not supported on Linux Bizhawk 2.8, Lua 5.1

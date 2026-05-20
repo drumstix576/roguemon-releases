@@ -73,18 +73,19 @@ function self.init()
   self.UserInfo.secret = secret
   self.UserInfo.deviceToken = deviceToken
 
-  if not FileIO.verifyHeartbeat() then
-    local target = self.resolveLeaderboardTarget()
-    Utils.printDebug("[Leaderboard] Launching uploader with target=%s (build=%s)", target, GameSettings.roguemonVersionStr or "?")
-    if not FileIO.launchEventUploader(target) then
-      self.disabled = true
-      return
-    end
-  else
-    Utils.printDebug("[Leaderboard] Event uploader already running!")
-  end
-
+  -- Resolve run identity first so the uploader's log file is keyed on this
+  -- run's ROM uid (one log per seed makes triage tractable).
   GameState.setROMInfo()
+
+  local target = self.resolveLeaderboardTarget()
+  Utils.printDebug("[Leaderboard] Init uploader target=%s uid=%s (build=%s)",
+    target, tostring(self.ROMInfo.uid), GameSettings.roguemonVersionStr or "?")
+  if not FileIO.initUploader(target, self.ROMInfo.uid) then
+    self.disabled = true
+    return
+  end
+  FileIO.handshakeUploader()
+
   client.enablerewind(false) -- force disable rewind at startup to prevent accidents. restore on win/loss.
 end
 
@@ -96,14 +97,6 @@ end
 -- 3 = win, 4 = loss. `currentTrainer` is the active trainer ID (0 if none).
 function self.onRomEvent(actionCode, currentTrainer)
   if not isActive() then return end
-  if not FileIO.verifyHeartbeat() then return end
-
-  local uploadError = FileIO.getUploadErrors()
-  if uploadError ~= "" then
-    self.LeaderboardUtils.addPopup("Error detected in event uploader: " .. uploadError)
-    Utils.printDebug("[Leaderboard] Error detected in event uploader: " .. uploadError)
-    return
-  end
 
   -- Refresh badge count for the wire payload. Run-end actions re-enable
   -- rewind so the player can navigate save menus / replay.

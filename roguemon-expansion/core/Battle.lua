@@ -173,7 +173,13 @@ local function onPartySwitch(battlerOffset)
         local mon = Tracker.getPokemon(slot, false)
         if not mon then return end
 
-        local alreadySeen = Battle.BattleParties[1][slot] and Battle.BattleParties[1][slot].seenAlready
+        -- revealedSlots is the durable guard (survives populateBattlePartyObject
+        -- rebuilds, which reset BattleParties[1] and wipe seenAlready). Without
+        -- it, each gBattlerPartyIndexes write during a single switch-in re-fires
+        -- revealEnemy and over-counts the trainer-seen total. Mirrors the
+        -- processPendingReveals guard above.
+        local alreadySeen = self.revealedSlots[slot]
+            or (Battle.BattleParties[1][slot] and Battle.BattleParties[1][slot].seenAlready)
         if alreadySeen then return end
 
         revealEnemy(slot, mon, battleFlags)
