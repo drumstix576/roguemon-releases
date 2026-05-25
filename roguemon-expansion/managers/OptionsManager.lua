@@ -25,7 +25,7 @@ local OPTION_DEFS = {
     { key = "Show reminders over cap",  default = false, parent = "Show reminders" },
     { key = "Show item descriptions",   default = true,  parent = "Show reminders" },
     { key = "Enable Leaderboard",       default = true },
-    { key = "Opt-in to Beta Release",   default = false },
+    { key = "Opt-out of Beta Release",  default = false },
     { key = "Display prizes on screen", default = true,  pageBreak = true },
     { key = "Display small prizes",     default = false, parent = "Display prizes on screen" },
     { key = "Mask Gym TM names",        valueGetter = readMaskTmNames, valueSetter = writeMaskTmNames },

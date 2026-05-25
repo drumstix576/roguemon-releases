@@ -700,18 +700,21 @@ local function RoguemonExpansionExtension()
 
         local flagPath = self.RunManager and self.RunManager.getSkipAutoSaveFlagPath and self.RunManager.getSkipAutoSaveFlagPath() or nil
         if flagPath and FileManager.fileExists(flagPath) then
-            local prevAutoSave = Options["Auto save tracked game data"]
-            if prevAutoSave then
-                Options["Auto save tracked game data"] = false
-                Program.addFrameCounter("Roguemon:RestoreAutoSave", 2, function()
-                    Options["Auto save tracked game data"] = prevAutoSave
-                    GachaMonData.initialRecentMonsLoaded = true
-                    -- Force recalculation on next update so playerViewedInitialStars
-                    -- picks up the RecentMon that will be added in the same cycle.
-                    GachaMonData.playerViewedMon = nil
-                    Utils.printDebug("[Startup] New game started.")
-                end, 1, true)
-            end
+            -- New run: skip loading the previous run's tracked data. Do NOT toggle the
+            -- persisted "Auto save tracked game data" Option to achieve this -- any
+            -- Main.SaveSettings() during the load window serializes the whole Options
+            -- table to Settings.ini, persisting the temporary 'false' and leaving the
+            -- box permanently unchecked. Instead overwrite the one-shot frame-1 counter
+            -- that Program.initialize() already scheduled (runs before this startup), so
+            -- the load is skipped exactly as AutoSave.loadFromFile does when disabled.
+            Program.addFrameCounter("Tracker:AutoSave.loadFromFile", 1, function()
+                Tracker.LoadStatus = Tracker.LoadStatusKeys.AUTO_DISABLED
+                GachaMonData.initialRecentMonsLoaded = true
+                -- Force recalculation on next update so playerViewedInitialStars
+                -- picks up the RecentMon that will be added in the same cycle.
+                GachaMonData.playerViewedMon = nil
+                Utils.printDebug("[Startup] New game started.")
+            end, 1, true)
             FileManager.deleteFile(flagPath)
         end
 
@@ -720,8 +723,8 @@ local function RoguemonExpansionExtension()
         -- (called from AutoSave.loadFromFile on frame 1). If AutoSave is off, that
         -- path never runs and tryAddToRecentMons is permanently gated — no RecentMons
         -- are ever created, breaking GachaMon star change tracking.
-        -- Frame 3 gives both the AutoSave import (frame 1) and the new-game callback
-        -- (frame 2) a chance to run first.
+        -- Frame 3 gives the frame-1 loadFromFile counter (the core import, or our
+        -- new-run skip callback above) a chance to run first.
         Program.addFrameCounter("Roguemon:EnsureRecentMonsLoaded", 3, function()
             if not GachaMonData.initialRecentMonsLoaded then
                 GachaMonData.initialRecentMonsLoaded = true

@@ -22,6 +22,7 @@ local self = {
         SHOP_STAGE_FLUSH = 20,
         SHOP_STAGE_PURGE = 21,
         SET_REDUCE_ANIMATIONS = 22,
+        END_RUN_LEADERBOARD = 23,
     },
     -- Checklist step bits (must match ROM ROGUEMON_CHECKLIST_* in constants/roguemon.h)
     ChecklistSteps = {
@@ -143,6 +144,14 @@ end
 function self.purgeShopStaging()
     -- Dedup: same rationale — repeat purges would just consume queue slots.
     return self.enqueueCommand(self.Commands.SHOP_STAGE_PURGE, 0, 0, 0, true)
+end
+
+-- End the run on the leaderboard only (the log-view DQ). The ROM publishes a
+-- terminal LOSS for the chosen mon, or the lead slot if no pivot is locked
+-- yet, and marks the run ended. Idempotent ROM-side; dedup so a repeat request
+-- while one is queued is a no-op.
+function self.endRunOnLeaderboard()
+    return self.enqueueCommand(self.Commands.END_RUN_LEADERBOARD, 0, 0, 0, true)
 end
 
 return self

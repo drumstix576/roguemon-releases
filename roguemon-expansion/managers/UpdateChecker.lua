@@ -124,7 +124,8 @@ end
 -- @param ext  The extension self table (RoguemonExpansion instance)
 -- @return isUpdateAvailable (boolean), releaseNotesUrl (string|nil)
 function UpdateChecker.checkForUpdates(ext)
-    local betaEnabled = Options and Options["Opt-in to Beta Release"] or false
+    local optedOutOfBeta = Options and Options["Opt-out of Beta Release"] or false
+    local betaEnabled = not optedOutOfBeta
     local github = ext.github or ""
     local currentVersion = ext.version or ""
     local isAlpha = currentVersion:find("-alpha%.") ~= nil

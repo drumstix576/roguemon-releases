@@ -50,7 +50,7 @@ function RoguemonGameSettings.loadGameSettings()
     GameSettings.roguemonBuildProfile = Memory.readdword(startAddr + 0x18)
     GameSettings.roguemonConfigStamp = Memory.readdword(startAddr + 0x24)
 
-    local expectedConfigStamp = 0xE9EDAB44
+    local expectedConfigStamp = 0x615FF706
     GameSettings.roguemonConfigStampExpected = expectedConfigStamp
     if GameSettings.roguemonConfigStamp ~= expectedConfigStamp then
         error(string.format("RoguemonConfig stamp mismatch: ROM 0x%08X, expected 0x%08X", GameSettings.roguemonConfigStamp, expectedConfigStamp))
@@ -648,6 +648,7 @@ function RoguemonGameSettings.loadGameSettings()
     GameSettings.typeStampOffset = Memory.readword(startAddr + 0x6CA)
     GameSettings.modeSwitchStampOffset = Memory.readword(startAddr + 0x6CC)
     GameSettings.leaderboardEventBeaconAddr = Memory.readdword(startAddr + 0x6D0)
+    GameSettings.leaderboardRunEndedFlagId = Memory.readword(startAddr + 0x6D4)
 
     -- TM/HM palette pointers
     GameSettings.gItemIconPalette_TMHM = {}
