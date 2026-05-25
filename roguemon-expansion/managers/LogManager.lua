@@ -532,6 +532,13 @@ function LogManager.viewLogFile(postfix)
         return
     end
 
+    -- Viewing the CURRENT run's log reveals this seed. If a leaderboard run is
+    -- in progress (and not already ended), confirm with the player; confirming
+    -- ends the run on the leaderboard. Declining aborts the view entirely.
+    if not Roguemon.Leaderboard.confirmLogViewWillEndRun() then
+        return
+    end
+
     -- Current log: autodetect, then prompt only if needed
     local logpath = LogOverlay.getLogFileAutodetected(postfix)
     if logpath == nil and not LogOverlay.hasParsedThisLog(postfix) then

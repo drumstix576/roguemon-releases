@@ -36,15 +36,20 @@ local FileIO    = self.FileIOManager
 local GameState = self.GameStateCollector
 
 -- Map the ROM build's roguemonVersionStr to a leaderboard target.
--- Build tags are typically "dev", "alpha-N", "beta-RC*", "public-X.Y.Z".
--- Priority order matters: an "alpha-public" tag would match alpha first.
--- Unknown tags fall through to "prod" so an unrecognized build never
--- silently writes to local/dev.
+-- Release tags stamp the ROM with one of:
+--   "dev"               -> local dev backend (unreleased working copy)
+--   "vX.Y.Z-alpha.N"    -> dev backend
+--   "vX.Y.Z-beta.N"     -> prod backend (open beta posts to the live board)
+--   "vX.Y.Z"            -> prod backend (stable public release)
+-- The bare "vX.Y.Z" arm has to be matched on shape, not a substring keyword,
+-- because stable tags carry no profile suffix. Unknown tags fall through to
+-- dev so a typo'd / locally-modified build can't silently write to prod.
 function self.resolveLeaderboardTarget()
   local v = GameSettings.roguemonVersionStr or ""
   if v == "dev" then return "local" end
   if v:find("alpha", 1, true) then return "dev" end
-  if v:find("beta", 1, true) or v:find("public", 1, true) then return "prod" end
+  if v:find("beta", 1, true) then return "prod" end
+  if v:match("^v%d+%.%d+%.%d+$") then return "prod" end
   Utils.printDebug("[Leaderboard] Unknown build tag '%s'; defaulting uploader to dev", v)
   return "dev"
 end
@@ -127,6 +132,53 @@ function self.checkForFrameSkip()
     self.LeaderboardUtils.addPopup("A savestate has been loaded, or the game has been rewound.\nDoing either is disallowed while using the leaderboard, and as a result your current run will be ended (only on the leaderboard, you may continue to play).")
     self.disabled = true
   end
+end
+
+-- ROM-authoritative "run already terminated on the leaderboard" flag (set by a
+-- WIN, a normal LOSS, or a prior log-view DQ). Read from the saved flag so it
+-- survives a tracker reload mid-run, keeping the prompt accurate.
+local function isRunEndedOnLeaderboard()
+  return Roguemon.Core.Utils.getGameFlag(GameSettings.leaderboardRunEndedFlagId)
+end
+
+-- Modal yes/no caution. Returns true iff the player confirmed.
+local function confirmEndRunDialog()
+  local confirmed = false
+  local done = false
+  local form = ExternalUI.BizForms.createForm(
+    "End run on leaderboard?", 470, 135, 100, 20,
+    function() done = true end) -- closing via X = cancel
+  form:createLabel("Viewing the log reveals this seed and will end your", 15, 10)
+  form:createLabel("current run ON THE LEADERBOARD. You can keep playing,", 15, 26)
+  form:createLabel("but the run will no longer count.", 15, 42)
+  form.Controls.confirm = form:createButton("View log (end run)", 70, 78, function()
+    confirmed = true
+    done = true
+    form:destroy()
+  end, 150, 25)
+  form.Controls.cancel = form:createButton("Cancel", 265, 78, function()
+    confirmed = false
+    done = true
+    form:destroy()
+  end, 110, 25)
+  while not done do
+    Main.frameAdvance()
+  end
+  return confirmed
+end
+
+-- Gate for opening the CURRENT run's log file. Returns true if the log may be
+-- shown, false if the player declined. When a leaderboard run is in progress
+-- and not already ended, prompts the player; confirming ends the run on the
+-- leaderboard (leaderboard-only — the run keeps going in-game) and lets the
+-- log open. No prompt when the leaderboard is inactive or the run is already
+-- over, so reviewing the log after a win/loss is unaffected.
+function self.confirmLogViewWillEndRun()
+  if not isActive() then return true end
+  if isRunEndedOnLeaderboard() then return true end
+  if not confirmEndRunDialog() then return false end
+  Roguemon.TrackerCommandManager.endRunOnLeaderboard()
+  return true
 end
 
 return self
