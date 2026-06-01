@@ -276,6 +276,7 @@ function OverrideManager.overrideCoreTrackerFunctions()
     OverrideManager.registerOverride("GachaMonFileManager", GachaMonFileManager, "GachaMonFileManager", "getRatingSystemFilePath")
 
     OverrideManager.registerOverride("MiscData",    MiscData,    "MiscData",    "getTotalItems")
+    OverrideManager.registerOverride("MiscData",    MiscData,    "MiscData",    "getMonGender")
 
     OverrideManager.registerOverride("TrackerScreen", TrackerScreen, "TrackerScreen", "drawPokemonInfoArea")
     OverrideManager.registerOverride("TrackerScreen", TrackerScreen, "TrackerScreen", "drawMovesArea")

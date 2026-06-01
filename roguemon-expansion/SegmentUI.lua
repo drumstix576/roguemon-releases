@@ -161,22 +161,40 @@ function self.getSegmentStatusText()
     local mandatoryCompleted, mandatoryTotal, completed, total = 0, 0, 0, 0
     mandatoryCompleted, mandatoryTotal, completed, total = manager.countTrainerProgress(seg)
 
-    -- Look-ahead: if next segment is a rival at A3+, show +1? in total
+    -- Look-ahead: if next segment in the play order is an A3 rival, the
+    -- player can backward-merge the upcoming rival into this segment by
+    -- fighting it without healing. Surface that option as a name
+    -- decoration so it reads at a glance, matching the PENDING display.
+    -- Segment IDs are assigned in play order, so the next segment is
+    -- just currentId + 1 - no SegmentOrder indirection needed.
+    --
+    -- Read the live VAR_ROGUEMON_ASCENSION via readGameVar rather than
+    -- GameSettings.roguemonAscension: the latter is a config stamp the
+    -- randomizer writes at randomize-time, so direct ROM builds that
+    -- skip the randomizer leave the stamp at 0 even on a real A3 run.
     local nextIsA3Rival = false
-    if GameSettings.roguemonAscension and GameSettings.roguemonAscension >= 3 then
-        local nextId = manager.SegmentOrder[(state.currentIndex or 0) + 2]
-        local nextSeg = nextId and getSegmentDef(nextId) or nil
-        if nextSeg and nextSeg.type == 2 then
-            nextIsA3Rival = true
+    if state.currentId ~= nil and Roguemon.Core and Roguemon.Core.Utils
+            and Roguemon.Core.Utils.readGameVar
+            and GameSettings.roguemonAscensionOffset then
+        local ascension = Roguemon.Core.Utils.readGameVar(GameSettings.roguemonAscensionOffset)
+        if ascension and ascension >= 3 then
+            local nextSeg = getSegmentDef(state.currentId + 1)
+            if nextSeg and nextSeg.type == 2 then
+                nextIsA3Rival = true
+            end
         end
     end
 
+    local nameText = string.format("%s%s", prefix, segName)
+    if nextIsA3Rival then
+        nameText = string.format("%s (+ Rival?)", nameText)
+    end
     local totalStr = nextIsA3Rival
-        and string.format("%d/%d + Rival?", completed, total)
+        and string.format("%d/%d + 1?", completed, total)
         or string.format("%d/%d total", completed, total)
     local text = string.format(
-        "%s%s: %d/%d mandatory, %s",
-        prefix, segName,
+        "%s: %d/%d mandatory, %s",
+        nameText,
         mandatoryCompleted, mandatoryTotal,
         totalStr
     )

@@ -982,6 +982,18 @@ function self.getRemainingItemCount()
         end
     end
 
+    -- A3 rival merge pending: ROM defers MarkItemsCollected for the just-
+    -- completed segment, but currentIndex has already advanced past the
+    -- rival so prevId above lands on the rival (no items), not the
+    -- pre-rival segment. Surface the deferred items via lastCompletedId.
+    if Utils.bit_and(state.flags or 0, FLAG_A3_RIVAL_PENDING) ~= 0
+            and state.lastCompletedId ~= nil then
+        local lastSeg = self.SegmentsById[state.lastCompletedId]
+        if lastSeg then
+            total = total + countRemaining(lastSeg.items)
+        end
+    end
+
     return total
 end
 
@@ -1022,6 +1034,17 @@ function self.getRemainingItems()
         if prevSeg then
             local prevItems = collectRemaining(prevSeg.items)
             for _, flag in ipairs(prevItems) do
+                result[#result + 1] = flag
+            end
+        end
+    end
+
+    if Utils.bit_and(state.flags or 0, FLAG_A3_RIVAL_PENDING) ~= 0
+            and state.lastCompletedId ~= nil then
+        local lastSeg = self.SegmentsById[state.lastCompletedId]
+        if lastSeg then
+            local lastItems = collectRemaining(lastSeg.items)
+            for _, flag in ipairs(lastItems) do
                 result[#result + 1] = flag
             end
         end

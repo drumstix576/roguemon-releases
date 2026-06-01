@@ -94,10 +94,34 @@ local function applyPreEvoNotes(targetId, preId)
     end
 end
 
+local function applyHighestStatMark(targetId)
+    local pokemon = PokemonData.Pokemon[targetId]
+    if not pokemon or not pokemon.baseStats then
+        return
+    end
+    local statsOrdered = { "hp", "atk", "def", "spa", "spd", "spe" }
+    local maxValue
+    for _, statKey in ipairs(statsOrdered) do
+        local v = pokemon.baseStats[statKey]
+        if v and (not maxValue or v > maxValue) then
+            maxValue = v
+        end
+    end
+    if not maxValue then
+        return
+    end
+    for _, statKey in ipairs(statsOrdered) do
+        if pokemon.baseStats[statKey] == maxValue then
+            Tracker.TrackStatMarking(targetId, statKey, 1)
+        end
+    end
+end
+
 local function applyNotesForPokemonId(targetId)
     if not targetId or targetId <= 0 then
         return
     end
+    applyHighestStatMark(targetId)
     local tableRef = ensureEvolutionTable()
     if not tableRef then
         return

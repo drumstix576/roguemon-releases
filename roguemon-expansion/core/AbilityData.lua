@@ -79,6 +79,15 @@ function self.updateResources()
         ["Earth Eater"]      = "EarthEaterId",
     }
 
+    -- Compare ability identity ignoring cosmetic spelling/spacing differences
+    -- between the tracker's name table and the ROM (e.g. "Compoundeyes" vs
+    -- "Compound Eyes", "Lightningrod" vs "Lightning Rod"). Used below to spot
+    -- reused core entries that the expansion's renumbering left describing a
+    -- DIFFERENT ability.
+    local function normalizeName(n)
+        return n and (n:lower():gsub("%W", "")) or ""
+    end
+
     for id = 1, abilitiesCount do
         local base = id * abilitySize
         local name = s(buf, base + offsetName - 1, nameLen - 1)
@@ -92,6 +101,17 @@ function self.updateResources()
         local enhancedPtr = enhancedPtrs[id]
 
         local ability = AbilityData.Abilities[id] or { id = id }
+
+        -- Past the Gen 3 boundary the expansion renumbers abilities (e.g. id 76
+        -- Cacophony -> Air Lock, id 77 Air Lock -> Tangled Feet). A reused core
+        -- entry then carries the description of a DIFFERENT ability, raw-set from
+        -- the language file, which would shadow the __index loader below. Drop it
+        -- so the loader (ROM, the source of truth) wins.
+        if ability.name and normalizeName(ability.name) ~= normalizeName(name) then
+            ability.description = nil
+            ability.descriptionEmerald = nil
+        end
+
         ability.id = id
         ability.name = name
 

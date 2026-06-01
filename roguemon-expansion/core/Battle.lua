@@ -736,7 +736,14 @@ function self.beginNewBattle()
     Input.StatHighlighter:resetSelectedStat()
 
     Tracker.resetBattleNotes()
-    Battle.trySwapScreenBackToMain()
+    -- Some notification types (currently curseInfo, raised at the start
+    -- of a forward-merged rival fight) need to persist into the battle
+    -- screen. Item / move notifications stay clearable on purpose so
+    -- players can pop a stack by starting a fight.
+    local sm = Roguemon and Roguemon.ScreenManager
+    if not (sm and sm.isNotificationBlockingBattleSwap and sm.isNotificationBlockingBattleSwap()) then
+        Battle.trySwapScreenBackToMain()
+    end
 
     -- Don't clear the mon to show if it's waiting to be viewed
     local APO = AnimationManager.GachaMonAnims.PackOpening
