@@ -7,6 +7,32 @@ function self.getTotalItems()
     return GameSettings.itemsCount or 375
 end
 
+-- Vanilla MiscData.getMonGender reads genderRatio from the vanilla BaseStats
+-- struct (sizeof 0x1C, genderRatio at 0x10). The expansion's SpeciesInfo struct
+-- is 0xC4 bytes with genderRatio at 0x12, so we route through the RoguemonConfig
+-- values exposed on GameSettings.
+function self.getMonGender(pokemonID, personality)
+    if not PokemonData.isValid(pokemonID) then
+        return MiscData.Gender.UNKNOWN
+    end
+    local threshold = Memory.readbyte(
+        GameSettings.gSpeciesInfo
+            + (pokemonID * GameSettings.sizeofBaseStatsPokemon)
+            + GameSettings.offsetGenderRatio
+    )
+    if threshold == MiscData.Gender.MALE then
+        return MiscData.Gender.MALE
+    elseif threshold == MiscData.Gender.FEMALE then
+        return MiscData.Gender.FEMALE
+    elseif threshold == MiscData.Gender.UNKNOWN then
+        return MiscData.Gender.UNKNOWN
+    elseif personality % 256 >= threshold then
+        return MiscData.Gender.MALE
+    else
+        return MiscData.Gender.FEMALE
+    end
+end
+
 function self.readEnhancedItemDescriptionPtr(itemId)
     local base = GameSettings.itemEnhancedDescAddr
     if not base or base == 0 then return nil end

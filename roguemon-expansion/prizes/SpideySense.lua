@@ -21,23 +21,50 @@ local function isSpideySenseActive()
     return Roguemon.ItemManager.hasRoguemonItem(spideySenseItemId, 1)
 end
 
-local SPIDEY_MOVE_KEYS = {
-    "CounterId",
-    "MirrorCoatId",
-    "DestinyBondId",
-    "ComeuppanceId",
-    "MetalBurstId",
-    "FinalGambitId",
-    "SpiderWebId",
+-- shortKey -> canonical ROM move name (matches gMovesInfo[*].name). Values entries
+-- of the form "<shortKey>Id" are populated lazily by Battle.lua when a move is
+-- observed; on a clean tracker boot they are nil, so resolve from MoveData.Moves
+-- by name and cache back into Values for cheap subsequent lookups.
+local SPIDEY_MOVES_BY_NAME = {
+    Counter = "Counter",
+    MirrorCoat = "Mirror Coat",
+    DestinyBond = "Destiny Bond",
+    Comeuppance = "Comeuppance",
+    MetalBurst = "Metal Burst",
+    FinalGambit = "Final Gambit",
+    SpiderWeb = "Spider Web",
 }
 
+local function ensureSpideyMoveIdsPopulated()
+    if type(MoveData) ~= "table" or type(MoveData.Values) ~= "table" then
+        return
+    end
+    local moves = MoveData.Moves
+    if type(moves) ~= "table" then
+        return
+    end
+    for shortKey, moveName in pairs(SPIDEY_MOVES_BY_NAME) do
+        local valuesKey = shortKey .. "Id"
+        if MoveData.Values[valuesKey] == nil then
+            for id, move in ipairs(moves) do
+                if move and move.name == moveName then
+                    MoveData.Values[valuesKey] = id
+                    break
+                end
+            end
+        end
+    end
+end
+
 local function getSpideyMoveIds()
+    ensureSpideyMoveIdsPopulated()
     local ids = {}
     local values = MoveData and MoveData.Values
     if values then
-        for _, key in ipairs(SPIDEY_MOVE_KEYS) do
-            if values[key] then
-                ids[values[key]] = true
+        for shortKey in pairs(SPIDEY_MOVES_BY_NAME) do
+            local id = values[shortKey .. "Id"]
+            if id then
+                ids[id] = true
             end
         end
     end

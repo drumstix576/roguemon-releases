@@ -411,6 +411,89 @@ local function testCapsDisplayFallsBackWithoutGameSettings()
     return true
 end
 
+local function testStartedRouteWithA3RivalNextShowsHint()
+    withRestores(function(stubGlobal)
+        local segUI = Roguemon.SegmentUI
+
+        stubGlobal("GameSettings", { roguemonAscensionOffset = 0x100 })
+        stubGlobal("Roguemon", {
+            Core = { Utils = { readGameVar = function(off)
+                return off == 0x100 and 3 or 0
+            end } },
+            SegmentManager = {
+                State = {
+                    currentId = 8,       -- ROUTE6_11
+                    currentIndex = 8,
+                    flags = 0x01,        -- FLAG_STARTED
+                    optionalCount = 0,
+                    optionalQueue = {},
+                },
+                SegmentsById = {
+                    [8] = { id = 8, name = "Route 6/11", type = 0 },
+                    [9] = { id = 9, name = "Rival 4",    type = 2 },
+                    [10] = { id = 10, name = "Lt. Surge", type = 1 },
+                },
+                countTrainerProgress = function() return 2, 3, 2, 17 end,
+                isFullClearSegment = function() return false end,
+                readSegmentState = function()
+                    return Roguemon.SegmentManager.State
+                end,
+            },
+            PrizeManager = { readPrizeState = function() return { queueCount = 0 } end },
+            CurseManager = { getCurseForSegment = function() return nil end },
+            SegmentUI = segUI,
+        })
+
+        local text = segUI.getSegmentStatusText()
+        assert(string.find(text, "%(%+ Rival%?%)", 1) ~= nil,
+            string.format("Expected '(+ Rival?)' name decoration, got: %s", text))
+        assert(string.find(text, "%+ 1%?$", 1) ~= nil,
+            string.format("Expected '+ 1?' total suffix, got: %s", text))
+    end)
+    return true
+end
+
+local function testStartedRouteWithoutA3RivalNextShowsPlainTotal()
+    withRestores(function(stubGlobal)
+        local segUI = Roguemon.SegmentUI
+
+        -- Ascension < 3: the rival hint must not appear even if next is a
+        -- rival-type segment in the order.
+        stubGlobal("GameSettings", { roguemonAscensionOffset = 0x100 })
+        stubGlobal("Roguemon", {
+            Core = { Utils = { readGameVar = function() return 1 end } },
+            SegmentManager = {
+                State = {
+                    currentId = 8,
+                    currentIndex = 8,
+                    flags = 0x01,
+                    optionalCount = 0,
+                    optionalQueue = {},
+                },
+                SegmentsById = {
+                    [8] = { id = 8, name = "Route 6/11", type = 0 },
+                    [9] = { id = 9, name = "Rival 4",    type = 2 },
+                },
+                countTrainerProgress = function() return 2, 3, 2, 17 end,
+                isFullClearSegment = function() return false end,
+                readSegmentState = function()
+                    return Roguemon.SegmentManager.State
+                end,
+            },
+            PrizeManager = { readPrizeState = function() return { queueCount = 0 } end },
+            CurseManager = { getCurseForSegment = function() return nil end },
+            SegmentUI = segUI,
+        })
+
+        local text = segUI.getSegmentStatusText()
+        assert(string.find(text, "Rival") == nil,
+            string.format("Did not expect 'Rival' hint at A1, got: %s", text))
+        assert(string.find(text, "total$") ~= nil,
+            string.format("Expected plain 'total' suffix, got: %s", text))
+    end)
+    return true
+end
+
 function SegmentUITests.run()
     Utils.printDebug("[TEST] Running SegmentUI tests")
     local tests = Roguemon.Tests
@@ -424,6 +507,8 @@ function SegmentUITests.run()
         tests.runTest("full clear carousel highlight", testFullClearCarouselHighlight),
         tests.runTest("optional queue shows in carousel", testOptionalQueueShowsInCarousel),
         tests.runTest("no optional shows base segment", testNoOptionalShowsBaseSegment),
+        tests.runTest("started route with A3 rival next shows hint", testStartedRouteWithA3RivalNextShowsHint),
+        tests.runTest("started route without A3 rival next shows plain total", testStartedRouteWithoutA3RivalNextShowsPlainTotal),
     }
 
     local allPassed = true
