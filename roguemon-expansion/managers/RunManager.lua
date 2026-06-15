@@ -150,7 +150,7 @@ function self.LoadNextRom()
     end
 
     Utils.tempEnableBizhawkSound()
-    diagBeforeRun("randomization fallback")
+    diagBeforeMainRun("randomization fallback")
     Main.Run()
 end
 

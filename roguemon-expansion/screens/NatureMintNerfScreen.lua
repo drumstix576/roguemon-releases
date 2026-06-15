@@ -40,16 +40,11 @@ end
 
 function self.refreshStats()
     local list = {}
-    local state = getState()
-    local boostStat = state and state.natureMintBoostStat or nil
-
     for _, stat in ipairs(STAT_OPTIONS) do
-        if boostStat == nil or boostStat == 0xFF or stat.id ~= boostStat then
-            list[#list + 1] = {
-                id = stat.id,
-                label = stat.label,
-            }
-        end
+        list[#list + 1] = {
+            id = stat.id,
+            label = stat.label,
+        }
     end
 
     self.stats = list

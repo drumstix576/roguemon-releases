@@ -79,6 +79,14 @@ local function buildCheckboxButtons()
             end,
             onClick = function(btn)
                 if isParentOff(def) then return end
+                -- OFF -> ON transitions may need to resolve a conflict with
+                -- another setting first (e.g. leaderboard prompting to disable
+                -- Open Book). The hook returns true to allow the toggle, false
+                -- to abort it. The hook itself applies any side effects.
+                local currentlyOn = Roguemon.OptionsManager.getValue(def.key) == true
+                if not currentlyOn and def.confirmBeforeEnable then
+                    if not def.confirmBeforeEnable() then return end
+                end
                 btn.toggleState = Roguemon.OptionsManager.toggle(def.key)
                 Program.redraw(true)
             end,

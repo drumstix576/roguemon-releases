@@ -925,6 +925,31 @@ local function RoguemonExpansionExtension()
             originalBackTopOnClick(btn)
         end, "InfoScreen.Buttons.BackTop.onClick", originalBackTopOnClick)
 
+        -- Open Book Play Mode reveals randomized seed data, so its OFF -> ON
+        -- edge is treated the same as opening the current run's log on the
+        -- leaderboard: prompt to confirm, and on confirm publish a terminal
+        -- LOSS to the leaderboard before letting the toggle through. The
+        -- mutex side (greying "Enable Leaderboard" while Open Book is on)
+        -- lives in OptionsManager via the `disabledBy` predicate.
+        local openBookBtn = GameOptionsScreen.Buttons and GameOptionsScreen.Buttons["Open Book Play Mode"]
+        if openBookBtn then
+            local originalOpenBookOnClick = self.pristineOriginal(
+                "GameOptionsScreen.Buttons.OpenBookPlayMode.onClick",
+                openBookBtn.onClick
+            )
+            openBookBtn.onClick = self.tagWrapper(function(btn)
+                -- Only gate the OFF -> ON transition. Turning Open Book OFF
+                -- never DQs (it would only ever soften, not tighten, a prior
+                -- terminal state, which the ROM treats as one-way anyway).
+                if Options["Open Book Play Mode"] ~= true and self.Leaderboard then
+                    if not self.Leaderboard.confirmOpenBookWillEndRun() then
+                        return
+                    end
+                end
+                originalOpenBookOnClick(btn)
+            end, "GameOptionsScreen.Buttons.OpenBookPlayMode.onClick", originalOpenBookOnClick)
+        end
+
         self.RunManager.setupRunProfile()
 
         -- Debounce LogSearchScreen on-screen keyboard clicks.

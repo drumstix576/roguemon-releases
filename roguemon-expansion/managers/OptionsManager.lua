@@ -19,12 +19,21 @@ end
 --   * have `valueGetter`/`valueSetter` (ROM-backed: read/written via the ROM, never touches .tdat)
 -- `pageBreak = true` on an entry forces it (and any following entries until the next break)
 -- onto the next page in the Options screen, regardless of fill state.
+-- `confirmBeforeEnable = function() return ok end` is called by the Roguemon
+-- Options screen when the user is toggling the entry OFF -> ON. Returning false
+-- aborts the toggle; returning true (with any side effects already applied)
+-- lets the toggle proceed. Use for one-click resolution of conflicts with
+-- other settings (e.g. Open Book mode incompatibility with the leaderboard).
 local OPTION_DEFS = {
     { key = "Show reminders",           default = true },
     { key = "Show Egg reminders",       default = true,  parent = "Show reminders" },
     { key = "Show reminders over cap",  default = false, parent = "Show reminders" },
     { key = "Show item descriptions",   default = true,  parent = "Show reminders" },
-    { key = "Enable Leaderboard",       default = true },
+    { key = "Enable Leaderboard",       default = true,
+        confirmBeforeEnable = function()
+            return Roguemon.Leaderboard
+                and Roguemon.Leaderboard.confirmEnableWithOpenBookOff()
+        end },
     { key = "Opt-out of Beta Release",  default = false },
     { key = "Display prizes on screen", default = true,  pageBreak = true },
     { key = "Display small prizes",     default = false, parent = "Display prizes on screen" },
