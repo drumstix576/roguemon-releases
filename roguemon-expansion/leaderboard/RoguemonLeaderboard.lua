@@ -94,6 +94,14 @@ function self.init()
   client.enablerewind(false) -- force disable rewind at startup to prevent accidents. restore on win/loss.
 end
 
+-- ROM-authoritative "run already terminated on the leaderboard" flag (set by
+-- a WIN, a normal LOSS, a prior log-view DQ, or an Open Book DQ). Read from
+-- the saved flag so it survives a tracker reload mid-run, keeping every
+-- prompt and the onRomEvent gate accurate.
+local function isRunEndedOnLeaderboard()
+  return Roguemon.Core.Utils.getGameFlag(GameSettings.leaderboardRunEndedFlagId)
+end
+
 -- Single entry point for ROM-published leaderboard events. Wired from
 -- Battle.onTrackerEvent's RGMN_EVT_LEADERBOARD dispatch.
 --
@@ -102,6 +110,18 @@ end
 -- 3 = win, 4 = loss. `currentTrainer` is the active trainer ID (0 if none).
 function self.onRomEvent(actionCode, currentTrainer)
   if not isActive() then return end
+
+  -- Persisted-state gate: the toggle-moment prompts (Open Book DQ, leaderboard
+  -- enable resolver) catch the OFF -> ON cases live, but a player who has
+  -- Open Book persisted ON from a previous session starts a new run without
+  -- either prompt firing. Publish a terminal LOSS at the first ROM event so
+  -- the backend never accepts a tracked run that began with seed knowledge.
+  -- The ROM flag persists across reloads and the command dedups, so this is
+  -- idempotent if `onRomEvent` is called multiple times before the ROM
+  -- processes the queued command.
+  if Options["Open Book Play Mode"] == true and not isRunEndedOnLeaderboard() then
+    Roguemon.TrackerCommandManager.endRunOnLeaderboard()
+  end
 
   -- Refresh badge count for the wire payload. Run-end actions re-enable
   -- rewind so the player can navigate save menus / replay.
@@ -134,24 +154,19 @@ function self.checkForFrameSkip()
   end
 end
 
--- ROM-authoritative "run already terminated on the leaderboard" flag (set by a
--- WIN, a normal LOSS, or a prior log-view DQ). Read from the saved flag so it
--- survives a tracker reload mid-run, keeping the prompt accurate.
-local function isRunEndedOnLeaderboard()
-  return Roguemon.Core.Utils.getGameFlag(GameSettings.leaderboardRunEndedFlagId)
-end
-
--- Modal yes/no caution. Returns true iff the player confirmed.
-local function confirmEndRunDialog()
+-- Modal yes/no caution. `title` is the form's title bar; `lines` is up to
+-- three short message lines; `confirmLabel` is the affirmative button's
+-- text. Returns true iff the player confirmed.
+local function confirmDialog(title, lines, confirmLabel)
   local confirmed = false
   local done = false
   local form = ExternalUI.BizForms.createForm(
-    "End run on leaderboard?", 470, 135, 100, 20,
+    title, 470, 135, 100, 20,
     function() done = true end) -- closing via X = cancel
-  form:createLabel("Viewing the log reveals this seed and will end your", 15, 10)
-  form:createLabel("current run ON THE LEADERBOARD. You can keep playing,", 15, 26)
-  form:createLabel("but the run will no longer count.", 15, 42)
-  form.Controls.confirm = form:createButton("View log (end run)", 70, 78, function()
+  for i, text in ipairs(lines) do
+    form:createLabel(text, 15, 10 + (i - 1) * 16)
+  end
+  form.Controls.confirm = form:createButton(confirmLabel, 70, 78, function()
     confirmed = true
     done = true
     form:destroy()
@@ -176,8 +191,51 @@ end
 function self.confirmLogViewWillEndRun()
   if not isActive() then return true end
   if isRunEndedOnLeaderboard() then return true end
-  if not confirmEndRunDialog() then return false end
+  local confirmed = confirmDialog("End run on leaderboard?", {
+    "Viewing the log reveals this seed and will end your",
+    "current run ON THE LEADERBOARD. You can keep playing,",
+    "but the run will no longer count.",
+  }, "View log (end run)")
+  if not confirmed then return false end
   Roguemon.TrackerCommandManager.endRunOnLeaderboard()
+  return true
+end
+
+-- Gate for enabling Open Book Play Mode. Same shape as the log-view gate:
+-- returns true if the toggle may proceed, false if the player cancelled.
+-- When a leaderboard run is in progress and not already ended, prompts the
+-- player; confirming ends the run on the leaderboard, then lets the toggle
+-- through. No prompt when the leaderboard is inactive or the run is already
+-- over (toggling Open Book after a win/loss is a no-op for the leaderboard).
+function self.confirmOpenBookWillEndRun()
+  if not isActive() then return true end
+  if isRunEndedOnLeaderboard() then return true end
+  local confirmed = confirmDialog("End run on leaderboard?", {
+    "Enabling Open Book Play Mode reveals this seed and will end",
+    "your current run ON THE LEADERBOARD. You can keep playing,",
+    "but the run will no longer count.",
+  }, "Enable Open Book (end run)")
+  if not confirmed then return false end
+  Roguemon.TrackerCommandManager.endRunOnLeaderboard()
+  return true
+end
+
+-- One-click resolution for toggling "Enable Leaderboard" ON while Open Book
+-- Play Mode is enabled. The leaderboard cannot operate with Open Book on
+-- (seed data would be revealed), so prompt the player; on confirm, disable
+-- Open Book and persist Settings so the leaderboard becomes usable
+-- immediately. Returns true to let the leaderboard toggle proceed, false to
+-- abort. No prompt when Open Book is already off — toggle goes through.
+function self.confirmEnableWithOpenBookOff()
+  if Options["Open Book Play Mode"] ~= true then return true end
+  local confirmed = confirmDialog("Enable leaderboard?", {
+    "Open Book Play Mode is currently on. The leaderboard",
+    "cannot operate while Open Book is enabled. Disable",
+    "Open Book and enable the leaderboard?",
+  }, "Disable Open Book")
+  if not confirmed then return false end
+  Options["Open Book Play Mode"] = false
+  Main.SaveSettings(true)
   return true
 end
 

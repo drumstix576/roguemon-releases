@@ -335,27 +335,57 @@ function self.tryPatchVanillaROM()
     return result
 end
 
---- Check if the loaded ROM has a config stamp mismatch with the tracker.
---- If so, offer to re-patch from the stored vanilla.gba or prompt the user
---- to load their Vanilla FireRed ROM.
+--- Check if the loaded ROM is older than the tracker extension: either a
+--- config stamp mismatch (layout changed) or a version-string mismatch (ROM
+--- predates this build). If so, offer to re-patch from the stored vanilla.gba
+--- or prompt the user to load their Vanilla FireRed ROM.
 ---@param gameSettings table The RoguemonGameSettings module
----@return boolean handled true if a mismatch was detected and handled
+---@return boolean handled true if the tracker should stop startup (mismatch
+---        was handled by relaunch, or a layout-incompatible ROM was declined)
 function self.tryRepatchIfNeeded(gameSettings)
-    local ok, err = pcall(gameSettings.loadGameSettings)
-    if ok then
-        return false
-    end
-
-    if type(err) ~= "string" or not err:find("stamp mismatch") then
-        return false
-    end
-
-    print("[Patcher] Config stamp mismatch: tracker extension has been updated.")
-
     local ext = _G.Roguemon
+    local ok, err = pcall(gameSettings.loadGameSettings)
+
+    -- Two reasons to re-patch from the stored vanilla.gba:
+    --   1. Config layout changed: loadGameSettings errors with "stamp mismatch".
+    --      The tracker cannot run against this ROM at all.
+    --   2. ROM build predates this extension: the layout is still compatible
+    --      (load succeeded) but the ROM's embedded version differs from the
+    --      extension's. Both strings are stamped from the same ROGUEMON_VERSION
+    --      at build time, so any difference means the ROM is the older build.
+    --      The tracker can still run against it, so this update is optional.
+    local configCompatible = ok
+    if ok then
+        -- roguemonVersionStr is a fixed 16-byte ROM field (max 15 chars + NUL).
+        if GameSettings.roguemonVersionStr == ext.version then
+            return false
+        end
+        print(string.format(
+            "[Patcher] ROM version mismatch: ROM '%s', extension '%s'.",
+            tostring(GameSettings.roguemonVersionStr), tostring(ext.version)))
+    else
+        if type(err) ~= "string" or not err:find("stamp mismatch") then
+            return false
+        end
+        print("[Patcher] Config stamp mismatch: tracker extension has been updated.")
+    end
+
     local hasVanilla = FileManager.fileExists(ext.Paths.VANILLA_ROM)
     local hasClassicBps = FileManager.fileExists(ext.Paths.ROM_BPS_CLASSIC)
     local complete = false
+    local handled = true
+
+    -- User declined the update. If the ROM is still config-compatible, let the
+    -- tracker keep running against it (return false); a layout-incompatible ROM
+    -- must leave the tracker disabled with an error banner.
+    local function declineUpdate(configErrorMsg)
+        if configCompatible then
+            handled = false
+        else
+            ext.configError = configErrorMsg
+        end
+        complete = true
+    end
 
     local function showCompletionAndLaunch(launchProfile)
         compileLeaderboardUploader()
@@ -381,8 +411,7 @@ function self.tryRepatchIfNeeded(gameSettings)
     if hasVanilla then
         local form = ExternalUI.BizForms.createForm(
             "RogueMon Update Available", 480, 150, 100, 20, function()
-                ext.configError = "ROM update available. Relaunch to apply."
-                complete = true
+                declineUpdate("ROM update available. Relaunch to apply.")
             end)
         form:createLabel("Your RogueMon tracker has been updated!", 15, 10)
         form:createLabel("A new ROM patch needs to be applied to match.", 15, 30)
@@ -424,22 +453,19 @@ function self.tryRepatchIfNeeded(gameSettings)
         end, 120, 25)
 
         form.Controls.dismiss = form:createButton("Not Now", 260, 95, function()
-            ext.configError = "ROM update available. Relaunch to apply."
-            complete = true
+            declineUpdate("ROM update available. Relaunch to apply.")
             form:destroy()
         end, 95, 25)
     else
         local form = ExternalUI.BizForms.createForm(
             "RogueMon Update Available", 480, 140, 100, 20, function()
-                ext.configError = "ROM needs updating. Load Vanilla FireRed 1.1 to patch."
-                complete = true
+                declineUpdate("ROM needs updating. Load Vanilla FireRed 1.1 to patch.")
             end)
         form:createLabel("Your RogueMon tracker has been updated!", 15, 10)
         form:createLabel("A new ROM patch needs to be applied to match.", 15, 30)
         form:createLabel("Please load your Vanilla FireRed 1.1 ROM to apply the update.", 15, 52)
         form.Controls.ok = form:createButton("OK", 205, 85, function()
-            ext.configError = "ROM needs updating. Load Vanilla FireRed 1.1 to patch."
-            complete = true
+            declineUpdate("ROM needs updating. Load Vanilla FireRed 1.1 to patch.")
             form:destroy()
         end, 75, 25)
     end
@@ -448,7 +474,7 @@ function self.tryRepatchIfNeeded(gameSettings)
         Main.frameAdvance()
     end
 
-    return true
+    return handled
 end
 
 return self
