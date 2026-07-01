@@ -208,6 +208,10 @@ function self.readSpeciesInfoBuf(buf, id)
     local formFlagsOffset = GameSettings.speciesFormFlagsOffset
     local speciesFlags = formFlagsOffset and d(buf, start + formFlagsOffset) or 0
     local isCosmetic = (speciesFlags & (1 << 21)) ~= 0
+    -- Totem formes (bit 4) are battle-trial variants the randomizer bans from every
+    -- spawn pool (RoguemonRomHandler totemPokemon), so they can never be encountered
+    -- in a run. They aren't cosmetic-flagged, so exclude them explicitly downstream.
+    local isTotem = (speciesFlags & (1 << 4)) ~= 0
 
     return {
         pokemonID = id,
@@ -228,6 +232,7 @@ function self.readSpeciesInfoBuf(buf, id)
         weight = weight,
         natDexNum = natDexNum,
         isCosmetic = isCosmetic,
+        isTotem = isTotem,
     }
 end
 

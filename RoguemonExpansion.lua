@@ -261,6 +261,7 @@ local function RoguemonExpansionExtension()
     self.BallMasterManager = safeLoad(managersPath .. "BallMasterManager.lua")
     self.OptionsManager    = safeLoad(managersPath .. "OptionsManager.lua")
     self.StatsEditor       = safeLoad(managersPath .. "StatsEditor.lua")
+    self.SeedShare         = safeLoad(managersPath .. "SeedShare.lua")
     self.UpdateChecker     = safeLoad(managersPath .. "UpdateChecker.lua")
 
     -- ROM patching (vanilla FireRed detection + BPS apply)
@@ -300,6 +301,7 @@ local function RoguemonExpansionExtension()
         ClairvoyanceOverviewScreen = "ClairvoyanceOverviewScreen.lua",
         ClairvoyanceSwapScreen = "ClairvoyanceSwapScreen.lua",
         RoguemonOptionsScreen = "RoguemonOptionsScreen.lua",
+        ManualSeedScreen = "ManualSeedScreen.lua",
         PrizePoolScreen = "PrizePoolScreen.lua",
         SegmentProgressScreen = "SegmentProgressScreen.lua",
         BstEvoInfoScreen = "BstEvoInfoScreen.lua",

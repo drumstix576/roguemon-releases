@@ -144,13 +144,12 @@ function self.drawScreen()
         end
     end
 
-    -- Layout below items: [pager row | separator | Edit Stats label | Edit Stats buttons].
-    -- Separator/footer Y are fixed regardless of page count or pager visibility, so the
-    -- footer never shifts and never overflows the bottom border.
+    -- Layout below items: [pager row]. The Manual Seed entry point (seed-share
+    -- feature) is held back for this release. Its footer separator and button
+    -- were removed here; re-add them below the pager to restore the UI.
     local pagerRowY = START_Y + ITEMS_PER_PAGE * LINE_HEIGHT + 2
-    local separatorY = pagerRowY + PAGER_ROW_H + 2
 
-    -- Pagination chrome (positioned above the separator; hidden when single-page)
+    -- Pagination chrome (hidden when single-page)
     if Pager.totalPages > 1 then
         local prevX = canvas.x + 4
         local nextX = canvas.x + canvas.w - 4 - PAGER_ROW_H
@@ -160,47 +159,11 @@ function self.drawScreen()
         self.Buttons.CurrentPage.box = { labelX, pagerRowY, 36, PAGER_ROW_H }
     end
 
-    gui.drawLine(
-        canvas.x + 4, separatorY,
-        canvas.x + canvas.w - 4, separatorY,
-        Theme.COLORS["Upper box border"]
-    )
-
-    local labelY = separatorY + 4
-    Drawing.drawText(canvas.x + TEXT_X, labelY, "Edit Stats", Theme.COLORS["Default text"], canvas.shadow)
-    local buttonY = labelY + 12
-    self.Buttons.StatsByType.box = { canvas.x + 6, buttonY, 55, 11 }
-    self.Buttons.StatsByPokemon.box = { canvas.x + 70, buttonY, 55, 11 }
-
     self.drawButtons(suppressButtons, self.Buttons)
 end
 
 self.Buttons = {
     Back = Drawing.createUIElementBackButton(closeScreen, "Default text"),
-    StatsByType = {
-        type = Constants.ButtonTypes.FULL_BORDER,
-        getText = function() return "by Type" end,
-        box = { 0, 0, 55, 11 },
-        onClick = function()
-            if Roguemon.StatsEditor then
-                Roguemon.StatsEditor.showByType()
-            end
-        end,
-        boxColors = { "Upper box border" },
-        textColor = "Default text",
-    },
-    StatsByPokemon = {
-        type = Constants.ButtonTypes.FULL_BORDER,
-        getText = function() return "by Pokemon" end,
-        box = { 0, 0, 55, 11 },
-        onClick = function()
-            if Roguemon.StatsEditor then
-                Roguemon.StatsEditor.showByPokemon()
-            end
-        end,
-        boxColors = { "Upper box border" },
-        textColor = "Default text",
-    },
     PrevPage = {
         type = Constants.ButtonTypes.PIXELIMAGE,
         image = Constants.PixelImages.LEFT_ARROW,

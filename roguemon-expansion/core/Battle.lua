@@ -347,10 +347,33 @@ end
 
 function self.onTrackerEvent(addr, value, size)
     local base = GameSettings.rgmnTrackerEventAddr
+    -- Seqlock + gap probe (TOCTOU diagnostics). seqno is read before AND after
+    -- the payload: if the ROM bumps it mid-read, the (mode, a, b) snapshot below
+    -- straddles two emits and is a torn record. seqno is also tracked across
+    -- calls to detect whether BizHawk coalesces/drops callbacks under load (a
+    -- forward jump > 1 means the consumer never saw the intervening emit(s)).
+    local seqBefore = Memory.readword(base + 6)
     local battler = Memory.readbyte(base + 1)
     local mode    = Memory.readbyte(base)
     local species = Memory.readword(base + 2)
     local val     = Memory.readword(base + 4)
+    local seqAfter = Memory.readword(base + 6)
+
+    -- Raw per-event trace. seqno makes every line unique, so printDebug's
+    -- consecutive-duplicate suppression can't hide repeated events (e.g. the
+    -- 5 STAT_CHANGED emits that all format to the same text).
+    Utils.printDebug("[TrackerEvent][raw] seq=%d mode=%d battler=%d a=%d b=%d",
+        seqBefore, mode, battler, species, val)
+    if seqBefore ~= seqAfter then
+        Utils.printDebug("[TrackerEvent][TORN] seqno %d->%d during read; snapshot mode=%d a=%d b=%d",
+            seqBefore, seqAfter, mode, species, val)
+    end
+    if self._lastTrackerSeq ~= nil and seqBefore > self._lastTrackerSeq
+       and seqBefore ~= self._lastTrackerSeq + 1 then
+        Utils.printDebug("[TrackerEvent][GAP] seqno %d -> %d (consumer missed %d emit(s))",
+            self._lastTrackerSeq, seqBefore, seqBefore - self._lastTrackerSeq - 1)
+    end
+    self._lastTrackerSeq = seqBefore
 
     -- MOVE_LEARNED fires outside battle too (Rare Candy, evolution-triggered
     -- learns), so it must run before the gBattleOutcome gate that filters
