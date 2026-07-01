@@ -80,8 +80,9 @@ end
 -- The base tracker skips IDs 252-276 (vanilla Gen 3 placeholder gap) and
 -- hardcodes Shedinja as ID 303. The expansion ROM uses contiguous National Dex
 -- IDs, so the gap doesn't exist and Shedinja is ID 292 (not 303 = Mawile).
--- Also excludes cosmetic formes (ROM's isCosmeticForm flag) so they
--- don't inflate coverage counts. Additionally, hybrid moveType entries
+-- Also excludes cosmetic formes (ROM's isCosmeticForm flag) and Totem
+-- formes (isTotem flag) -- both are unobtainable in a run, so they
+-- shouldn't inflate coverage counts. Additionally, hybrid moveType entries
 -- (see getPartyPokemonEffectiveMoveTypes above) are evaluated as a product
 -- of their component types' effectiveness.
 function self.calculateCoverageTable(moveTypes, onlyFullyEvolved)
@@ -99,7 +100,7 @@ function self.calculateCoverageTable(moveTypes, onlyFullyEvolved)
 			return false
 		end
 		local pokemon = PokemonData.Pokemon[pokemonID]
-		if pokemon and pokemon.isCosmetic then
+		if pokemon and (pokemon.isCosmetic or pokemon.isTotem) then
 			return false
 		end
 		if onlyFullyEvolved and PokemonData.Pokemon[pokemonID].evolution ~= PokemonData.Evolutions.NONE then

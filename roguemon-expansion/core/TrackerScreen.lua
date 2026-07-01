@@ -135,6 +135,26 @@ function self.drawMovesArea(data)
 
 	local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Lower box background"])
 
+	-- Dynamic-category moves (Photon Geyser, LTBS, Shell Side Arm) flag
+	-- move.categoryHybrid when revealing the real category would leak info.
+	-- Replace the base physical/special icon with the diagonal-split hybrid.
+	-- Drawn before the Backseating block so the Chat icon takes priority on a
+	-- slot that is both hybrid-category and the Backseating-suggested move.
+	local allowHiddenMoveInfo = Battle.isViewingOwn or Options["Reveal info if randomized"] or not MoveData.IsRand.moveType
+	if Options["Show physical special icons"] and allowHiddenMoveInfo then
+		local moveCatOffset = 7
+		local iconX = Constants.SCREEN.WIDTH + moveCatOffset
+		local bgColor = Theme.COLORS["Lower box background"]
+		for i, move in ipairs(data.m.moves) do
+			if move.categoryHybrid then
+				local iconY = 94 + (i - 1) * 10 + 2
+				gui.drawRectangle(iconX, iconY, 7, 7, bgColor, bgColor)
+				Drawing.drawImageAsPixels(CATEGORY_HYBRID_ICON, iconX, iconY,
+					{ Theme.COLORS["Lower box text"] }, shadowcolor)
+			end
+		end
+	end
+
 	-- Backseating curse: replace category icon with speech-bubble on the suggested move.
 	-- Gate on ROGUEMON_BATTLE_FLAG_BACKSEATING (bit 2 of roguemonFlags) which the ROM sets
 	-- atomically alongside the slot pick in OnBattleStart, avoiding a stale slot-0 flash.
@@ -156,24 +176,6 @@ function self.drawMovesArea(data)
 				gui.drawRectangle(iconX, iconY, 7, 7, bgColor, bgColor)
 				-- Draw speech-bubble icon
 				Drawing.drawImageAsPixels(BACKSEATING_ICON, iconX, iconY,
-					{ Theme.COLORS["Lower box text"] }, shadowcolor)
-			end
-		end
-	end
-
-	-- Dynamic-category moves (Photon Geyser, LTBS, Shell Side Arm) flag
-	-- move.categoryHybrid when revealing the real category would leak info.
-	-- Replace the base physical/special icon with the diagonal-split hybrid.
-	local allowHiddenMoveInfo = Battle.isViewingOwn or Options["Reveal info if randomized"] or not MoveData.IsRand.moveType
-	if Options["Show physical special icons"] and allowHiddenMoveInfo then
-		local moveCatOffset = 7
-		local iconX = Constants.SCREEN.WIDTH + moveCatOffset
-		local bgColor = Theme.COLORS["Lower box background"]
-		for i, move in ipairs(data.m.moves) do
-			if move.categoryHybrid then
-				local iconY = 94 + (i - 1) * 10 + 2
-				gui.drawRectangle(iconX, iconY, 7, 7, bgColor, bgColor)
-				Drawing.drawImageAsPixels(CATEGORY_HYBRID_ICON, iconX, iconY,
 					{ Theme.COLORS["Lower box text"] }, shadowcolor)
 			end
 		end

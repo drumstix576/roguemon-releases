@@ -103,7 +103,29 @@ function self.LoadNextRom()
     local settingsFile = self.getSettingsFilePath(ascension, runType)
     Options.FILES["Settings File"] = settingsFile
 
+    -- Head-to-head manual seed: if a seed was armed via startManualSeedRun, force
+    -- it into this randomization. Main.GenerateNextRom() builds the randomizer CLI
+    -- command with no seed argument and lives in read-only core, so splice
+    -- "--seed N" onto the randomizer command by wrapping tryOsExecute for this
+    -- one call. The armed value lives in _G so it survives the Main.Run restart
+    -- between arming (at the tower) and this randomization.
+    local manualSeed = _G.__roguemonPendingManualSeed
+    _G.__roguemonPendingManualSeed = nil
+    local restoreOsExecute
+    if manualSeed ~= nil then
+        Utils.printDebug("[Run] Applying manual seed: %d", manualSeed)
+        local originalOsExecute = FileManager.tryOsExecute
+        restoreOsExecute = function() FileManager.tryOsExecute = originalOsExecute end
+        FileManager.tryOsExecute = function(command, ...)
+            if type(command) == "string" and command:find("-jar", 1, true) and command:find(" cli ", 1, true) then
+                command = string.format("%s --seed %d", command, manualSeed)
+            end
+            return originalOsExecute(command, ...)
+        end
+    end
+
     local nextRomInfo = Main.GenerateNextRom()
+    if restoreOsExecute then restoreOsExecute() end
     -- Randomization failed; mark randomization complete so we're not stuck waiting
     if nextRomInfo == nil then
         self.markRandomizationComplete()
@@ -154,6 +176,57 @@ function self.LoadNextRom()
     Main.Run()
 end
 
+
+-- TYPE_MYSTERY (0x0A) is the type index the ROM stores for Typeless runs. It can't
+-- be recovered by inverting TypeIndexMap (0x00/0x0A/0x14 all map to "unknown"), so
+-- it is handled explicitly; concrete types invert TypeIndexMap (the table
+-- getAscensionString already trusts).
+local TYPE_MYSTERY_INDEX = 0x0A
+
+local function typeNameToRomIndex(typeName)
+    if typeName == "typeless" then return TYPE_MYSTERY_INDEX end
+    for idx, name in pairs(PokemonData.TypeIndexMap) do
+        if name == typeName then return idx end
+    end
+    return nil
+end
+
+-- Re-stamp SaveBlock3's "last run" (ascension + type) so the back-to-tower
+-- white-out respawns the player in front of the SELECTED run's tile rather than
+-- the one they just ended. lastType (bits 0-4) + lastAscension (bits 5-7) share a
+-- byte at lastTypeBitfieldOffset, packed exactly as the ROM does in
+-- CB2_Randomizing (lastType = type index). lastFromRandom is cleared so the
+-- respawn targets the type tile even if the prior run came from the Random tile.
+-- NewGameInitData preserves all three across the reset, so WarpToAscensionTower
+-- lands the player on the matching tile.
+function self.stampRespawnRun(ascension, typeName)
+    local typeIndex = typeNameToRomIndex(typeName)
+    local sb3 = Roguemon.Core.Utils.getSaveBlock3Addr()
+    local packed = (typeIndex & 0x1F) | ((ascension & 0x07) << 5)
+    Memory.writebyte(sb3 + GameSettings.lastTypeBitfieldOffset, packed)
+    Memory.writebyte(sb3 + GameSettings.lastFromRandomOffset, 0)
+end
+
+-- Head-to-head "manual seed" launch (assisted model; see SeedShare). Arms the
+-- chosen seed for the next ROM-requested randomization, re-stamps the respawn
+-- tile to the selected run, then runs the manual new-run path (sendPlayerToTower
+-- + Main.Run) so the player is sent to the tower in front of the selected tile
+-- and interacts with it to start. The armed seed is stored in _G because the
+-- Main.Run restart rebuilds this module table; _G persists across it (same
+-- pattern as the sound-state restore).
+function self.startManualSeedRun(ascension, typeName, seed)
+    _G.__roguemonPendingManualSeed = seed
+    self.stampRespawnRun(ascension, typeName)
+    Utils.printDebug("[Run] Manual seed armed (A%d %s seed=%d)", ascension, tostring(typeName), seed)
+    -- Drive the manual new-run path through the core main loop rather than
+    -- calling LoadNextRom/Main.Run here: the loop calls Main.LoadNextRom when
+    -- loadNextSeed is set (Main.lua), and watchTriggered=false selects the
+    -- sendPlayerToTower reset branch. This is the same top-level mechanism the
+    -- ROM-driven randomization uses (WatchManager.onAwaitRandomization), so we
+    -- never re-enter Main.Run from a form callback.
+    self.watchTriggered = false
+    Main.loadNextSeed = true
+end
 
 function self.getAscensionString(ascension, typeIndex)
     local typeName = PokemonData.TypeIndexMap[typeIndex]
