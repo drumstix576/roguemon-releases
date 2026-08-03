@@ -24,12 +24,23 @@ end
 -- aborts the toggle; returning true (with any side effects already applied)
 -- lets the toggle proceed. Use for one-click resolution of conflicts with
 -- other settings (e.g. Open Book mode incompatibility with the leaderboard).
+-- `disabledBy = function() return reason end` returns a short reason string
+-- while the entry cannot be used at all, or nil when it is available. Unlike
+-- confirmBeforeEnable (which only fires at the moment of a toggle) this is
+-- evaluated on every draw, so it tracks state that changes outside the tracker
+-- -- e.g. the ROM's rule-enforcement option. The screen greys the entry and
+-- ignores clicks on it; the underlying Options value is left untouched, so the
+-- player's preference is preserved for when the blocker clears.
 local OPTION_DEFS = {
     { key = "Show reminders",           default = true },
     { key = "Show Egg reminders",       default = true,  parent = "Show reminders" },
     { key = "Show reminders over cap",  default = false, parent = "Show reminders" },
     { key = "Show item descriptions",   default = true,  parent = "Show reminders" },
     { key = "Enable Leaderboard",       default = true,
+        disabledBy = function()
+            if Roguemon.TrackerDataManager.areRulesEnforced() then return nil end
+            return "needs ROM rules enforcement"
+        end,
         confirmBeforeEnable = function()
             return Roguemon.Leaderboard
                 and Roguemon.Leaderboard.confirmEnableWithOpenBookOff()

@@ -43,6 +43,7 @@ local function readState()
         cleansingManifest     = GameSettings.roguemonTrackerCleansingManifestOffset,
         cleansingManifestEntrySize = GameSettings.roguemonTrackerCleansingManifestEntrySize,
         changeCounter         = GameSettings.roguemonTrackerChangeCounterOffset,
+        rulesEnforced         = GameSettings.roguemonTrackerRulesEnforcedOffset,
     }
 
     if memory and memory.readbyterange and size and size > 0 then
@@ -79,6 +80,7 @@ local function readState()
                 cleansingManifestSeq  = b(buf, offsets.cleansingManifestSeq),
                 cleansingManifest     = manifest,
                 changeCounter         = d(buf, offsets.changeCounter),
+                rulesEnforced         = b(buf, offsets.rulesEnforced),
             }
         end
     end
@@ -111,6 +113,7 @@ local function readState()
         cleansingManifestSeq  = Memory.readbyte(base + offsets.cleansingManifestSeq),
         cleansingManifest     = manifest,
         changeCounter         = Memory.readdword(base + offsets.changeCounter),
+        rulesEnforced         = Memory.readbyte(base + offsets.rulesEnforced),
     }
 end
 
@@ -126,6 +129,15 @@ end
 
 function self.isChecklistActive()
     return (self.State.checklistRequired or 0) ~= 0
+end
+
+-- ROM-authoritative mirror of the in-game "RULES" option. The leaderboard
+-- cannot operate without rule enforcement, so this gates both the options
+-- checkbox and isLeaderboardEnabled(). Defaults to enforced when the ROM
+-- state has not been read yet, so a not-yet-populated cache never reads as a
+-- rules-off run.
+function self.areRulesEnforced()
+    return (self.State.rulesEnforced or 1) ~= 0
 end
 
 function self.setupWatches()

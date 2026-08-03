@@ -28,9 +28,26 @@ self.UserInfo = {
   deviceToken = nil
 }
 
--- Set to true if the leaderboard cannot operate (wrong platform, uploader
--- failed, tracker self-detected savestate cheating, etc.)
+-- Set to true if the leaderboard cannot operate at all (wrong platform,
+-- uploader failed to start). Note this is NOT how a cheated/abandoned run is
+-- retired: ending a run goes through the ROM (see endRunOnLeaderboard below),
+-- because `disabled` also gates `onRomEvent` and would swallow the ROM's own
+-- terminal event on its way to the backend.
 self.disabled = false
+
+-- Deferred DQ for a rewind the tracker itself performs (Time Machine restore,
+-- Game Over "Retry battle", crash recovery). Set by
+-- confirmStateRestoreWillEndRun once the player consents, drained by the next
+-- checkForFrameSkip poll.
+--
+-- The publish CANNOT happen at consent time: the ROM's tracker command queue
+-- (gRoguemonTrackerData) and FLAG_ROGUEMON_LEADERBOARD_RUN_ENDED both live in
+-- EWRAM, which the restore about to run overwrites wholesale — a command
+-- enqueued first is simply rewound away. Deferring to the next poll (~30
+-- frames) lands the enqueue on the restored state instead. It doubles as the
+-- suppression latch for the frame-continuity check, so a rewind the player
+-- already consented to is not also reported as an unexplained savestate load.
+self.pendingRewindDq = false
 
 local FileIO    = self.FileIOManager
 local GameState = self.GameStateCollector
@@ -135,23 +152,48 @@ function self.onRomEvent(actionCode, currentTrainer)
   end
 end
 
--- Savestate / rewind detection. Tracker-only — the ROM has no view of
--- emulator-level cheats. On detection we disable the leaderboard so future
--- ROM-published events stop forwarding; the run will appear to the backend
--- as in-progress until the player eventually whites out, abandons, or wins,
--- at which point the ROM publishes a normal terminal event (which is now
--- gated out by `disabled`). A future improvement: have the tracker write
--- FLAG_BACK_TO_TOWER here so the ROM publishes LB_EVENT_LOSS legitimately
--- before disabling.
+-- Savestate / rewind detection for state changes the tracker did NOT initiate
+-- (BizHawk's own savestate hotkeys, rewind). Tracker-driven rewinds prompt up
+-- front through confirmStateRestoreWillEndRun and arrive here with
+-- `pendingRewindDq` latched, which retires the run without the popup.
+--
+-- Detection retires the run through the same handler as every other DQ:
+-- END_RUN_LEADERBOARD publishes a terminal LOSS and sets
+-- FLAG_ROGUEMON_LEADERBOARD_RUN_ENDED, which suppresses every later event for
+-- this run ROM-side. The leaderboard is deliberately NOT `disabled` here — that
+-- would gate `onRomEvent` out before the ROM's LOSS could be forwarded, leaving
+-- the run open on the backend forever (the old behavior testers reported).
 function self.checkForFrameSkip()
+  -- Sample continuity first and unconditionally: the baseline has to stay
+  -- fresh even on the polls where a discontinuity is ignored, otherwise a
+  -- later poll misreads ordinary play as a rewind.
+  local continuous = self.LeaderboardUtils.checkFrameContinuity()
+
+  -- Drain a consented tracker rewind. The restore has landed by now, so this
+  -- enqueue survives it. Unconditional on `continuous`: crash recovery loads a
+  -- state from a fresh session (frames jump forward, not back), and the undo
+  -- returns to a state where the ROM flag was still clear.
+  if self.pendingRewindDq then
+    self.pendingRewindDq = false
+    if isActive() then
+      Roguemon.TrackerCommandManager.endRunOnLeaderboard()
+    end
+    return
+  end
+
+  if continuous then return end
   if not isActive() then return end
+
+  -- New-run randomization reloads the ROM around a savestate save/restore
+  -- (RunManager.LoadNextRom); the tower / randomizing maps are exempt. Checked
+  -- before reading the run-ended flag, which needs a loaded game.
   local mapId = TrackerAPI.getMapId()
   if mapId == 0 or mapId == 280 or mapId == 281 or mapId == 282 then return end
 
-  if not self.LeaderboardUtils.checkFrameContinuity() then
-    self.LeaderboardUtils.addPopup("A savestate has been loaded, or the game has been rewound.\nDoing either is disallowed while using the leaderboard, and as a result your current run will be ended (only on the leaderboard, you may continue to play).")
-    self.disabled = true
-  end
+  if isRunEndedOnLeaderboard() then return end
+
+  self.LeaderboardUtils.addPopup("A savestate has been loaded, or the game has been rewound.\nDoing either is disallowed while using the leaderboard, and as a result your current run has been ended (only on the leaderboard, you may continue to play).")
+  Roguemon.TrackerCommandManager.endRunOnLeaderboard()
 end
 
 -- Modal yes/no caution. `title` is the form's title bar; `lines` is up to
@@ -182,6 +224,13 @@ local function confirmDialog(title, lines, confirmLabel)
   return confirmed
 end
 
+-- True when an action that would end the run has to ask the player first:
+-- there is a live leaderboard run and it has not already been retired. When
+-- false the caller proceeds silently — there is nothing left to end.
+local function needsEndRunConsent()
+  return isActive() and not isRunEndedOnLeaderboard()
+end
+
 -- Gate for opening the CURRENT run's log file. Returns true if the log may be
 -- shown, false if the player declined. When a leaderboard run is in progress
 -- and not already ended, prompts the player; confirming ends the run on the
@@ -189,8 +238,7 @@ end
 -- log open. No prompt when the leaderboard is inactive or the run is already
 -- over, so reviewing the log after a win/loss is unaffected.
 function self.confirmLogViewWillEndRun()
-  if not isActive() then return true end
-  if isRunEndedOnLeaderboard() then return true end
+  if not needsEndRunConsent() then return true end
   local confirmed = confirmDialog("End run on leaderboard?", {
     "Viewing the log reveals this seed and will end your",
     "current run ON THE LEADERBOARD. You can keep playing,",
@@ -208,8 +256,7 @@ end
 -- through. No prompt when the leaderboard is inactive or the run is already
 -- over (toggling Open Book after a win/loss is a no-op for the leaderboard).
 function self.confirmOpenBookWillEndRun()
-  if not isActive() then return true end
-  if isRunEndedOnLeaderboard() then return true end
+  if not needsEndRunConsent() then return true end
   local confirmed = confirmDialog("End run on leaderboard?", {
     "Enabling Open Book Play Mode reveals this seed and will end",
     "your current run ON THE LEADERBOARD. You can keep playing,",
@@ -217,6 +264,33 @@ function self.confirmOpenBookWillEndRun()
   }, "Enable Open Book (end run)")
   if not confirmed then return false end
   Roguemon.TrackerCommandManager.endRunOnLeaderboard()
+  return true
+end
+
+-- Gate for the tracker features that rewind emulator state: Time Machine
+-- restore points, the Game Over screen's "Retry battle", and crash recovery /
+-- its undo. Replaying a known outcome alters run progression exactly as much as
+-- reading the seed does, so these share the log-view DQ's prompt and its single
+-- END_RUN_LEADERBOARD handler.
+--
+-- `actionLabel` names the action in the first message line; `confirmLabel` is
+-- the affirmative button's text. Returns true if the rewind may proceed.
+--
+-- Unlike the seed-reveal gates the publish is deferred rather than immediate,
+-- because the restore would rewind it away; see `pendingRewindDq`. The latch is
+-- armed even when the run is already retired, because the restore can put the
+-- ROM back into a state where its run-ended flag is clear.
+function self.confirmStateRestoreWillEndRun(actionLabel, confirmLabel)
+  if not isActive() then return true end
+  if needsEndRunConsent() then
+    local confirmed = confirmDialog("End run on leaderboard?", {
+      string.format("%s rewinds your progress and will end", actionLabel),
+      "your current run ON THE LEADERBOARD. You can keep",
+      "playing, but the run will no longer count.",
+    }, confirmLabel)
+    if not confirmed then return false end
+  end
+  self.pendingRewindDq = true
   return true
 end
 

@@ -952,6 +952,94 @@ local function RoguemonExpansionExtension()
             end, "GameOptionsScreen.Buttons.OpenBookPlayMode.onClick", originalOpenBookOnClick)
         end
 
+        -- Every tracker feature that rewinds emulator state gets the same
+        -- treatment as the log-view / Open Book DQs: prompt first, and on
+        -- confirm publish the terminal LOSS through END_RUN_LEADERBOARD.
+        -- Without this, a restore only tripped the leaderboard's after-the-fact
+        -- frame-continuity check, which used to disable the uploader without
+        -- ever ending the run on the backend.
+        --
+        -- The two-stage buttons are wrapped at the click rather than at the
+        -- restore call so cancelling leaves no partial side effects behind
+        -- (the Time Machine rewinds Tracker.Data.playtime and creates its undo
+        -- point before restoring; the Game Over screen dismisses itself first).
+        -- Looked up late so a dev module reload can't leave these wrappers
+        -- calling into (and latching state on) a discarded Leaderboard table.
+        local function mayRestore(actionLabel, confirmLabel)
+            return self.Leaderboard.confirmStateRestoreWillEndRun(actionLabel, confirmLabel)
+        end
+
+        local retryBattleBtn = GameOverScreen.Buttons and GameOverScreen.Buttons.RetryBattle
+        if retryBattleBtn then
+            local originalRetryOnClick = self.pristineOriginal(
+                "GameOverScreen.Buttons.RetryBattle.onClick",
+                retryBattleBtn.onClick
+            )
+            retryBattleBtn.onClick = self.tagWrapper(function(btn)
+                -- The button arms on the first click and acts on the second;
+                -- only the acting click loads the battle-start savestate.
+                if btn.confirmAction and not mayRestore("Retrying this battle", "Retry battle (end run)") then
+                    btn.confirmAction = false
+                    btn.textColor = "Lower box text"
+                    Program.redraw(true)
+                    return
+                end
+                originalRetryOnClick(btn)
+            end, "GameOverScreen.Buttons.RetryBattle.onClick", originalRetryOnClick)
+        end
+
+        -- Restore-point buttons are rebuilt from scratch on every
+        -- buildOutPagedButtons() call, so gate them there rather than once at
+        -- startup. Rebuilding replaces the table wholesale, so no wrapper chain
+        -- accumulates across calls.
+        if TimeMachineScreen and TimeMachineScreen.buildOutPagedButtons then
+            local originalBuildPagedButtons = self.pristineOriginal(
+                "TimeMachineScreen.buildOutPagedButtons",
+                TimeMachineScreen.buildOutPagedButtons
+            )
+            TimeMachineScreen.buildOutPagedButtons = self.tagWrapper(function(...)
+                originalBuildPagedButtons(...)
+                for _, button in ipairs(TimeMachineScreen.Pager.Buttons or {}) do
+                    local originalOnClick = button.onClick
+                    button.onClick = self.tagWrapper(function(btn)
+                        -- Same two-stage confirm as Retry Battle: the first
+                        -- click only arms `confirmedRestore`.
+                        if btn.confirmedRestore and not mayRestore("Restoring an earlier point in time", "Restore (end run)") then
+                            btn.confirmedRestore = false
+                            btn:updateSelf()
+                            Program.redraw(true)
+                            return
+                        end
+                        originalOnClick(btn)
+                    end, "TimeMachineScreen.Pager.Buttons[].onClick", originalOnClick)
+                end
+            end, "TimeMachineScreen.buildOutPagedButtons", originalBuildPagedButtons)
+        end
+
+        -- Crash recovery restores a backup savestate up to three minutes old,
+        -- and its undo rewinds that. Both are reachable from Extras at any time,
+        -- crash or not, so they are gated too. Wrapped at the function (not the
+        -- click) since neither onClick mutates state before calling it.
+        if CrashRecoveryScreen then
+            local originalRecoverSave = self.pristineOriginal(
+                "CrashRecoveryScreen.recoverSave",
+                CrashRecoveryScreen.recoverSave
+            )
+            CrashRecoveryScreen.recoverSave = self.tagWrapper(function(...)
+                if not mayRestore("Recovering a backup save", "Recover save (end run)") then return end
+                return originalRecoverSave(...)
+            end, "CrashRecoveryScreen.recoverSave", originalRecoverSave)
+
+            local originalUndoRecoverSave = self.pristineOriginal(
+                "CrashRecoveryScreen.undoRecoverSave",
+                CrashRecoveryScreen.undoRecoverSave
+            )
+            CrashRecoveryScreen.undoRecoverSave = self.tagWrapper(function(...)
+                if not mayRestore("Undoing the save recovery", "Undo recovery (end run)") then return end
+                return originalUndoRecoverSave(...)
+            end, "CrashRecoveryScreen.undoRecoverSave", originalUndoRecoverSave)
+        end
+
         self.RunManager.setupRunProfile()
 
         -- Debounce LogSearchScreen on-screen keyboard clicks.

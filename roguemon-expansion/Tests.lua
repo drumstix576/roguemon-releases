@@ -28,6 +28,7 @@ local TEST_MODULES = {
     "LogVerify",
     "ShopScreen",
     "DataHelper",
+    "Leaderboard",
 }
 
 -- Wrap a test function so that asserts inside it (and inside functions it calls)
