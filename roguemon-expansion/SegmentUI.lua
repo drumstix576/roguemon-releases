@@ -61,6 +61,37 @@ local function getActiveCurseName()
     return manager.getActiveCurseName and manager.getActiveCurseName() or nil
 end
 
+-- " (x/y)" of Goliath mons defeated, for David vs Goliath only. Empty for every
+-- other curse. The manager returns nil unless that curse is the active one.
+local function getGoliathProgressSuffix()
+    local manager = Roguemon.CurseManager
+    if not manager then
+        return ""
+    end
+    local progress = manager.getGoliathProgress()
+    if not progress then
+        return ""
+    end
+    return string.format(" (%d/%d)", progress.defeated, progress.total)
+end
+
+-- " (NN%)" of the lead mon's current HP, for Safety Zone only. Empty for every
+-- other curse. Safety Zone rolls to discard a bag heal when you enter a fight
+-- below 75% HP, so surface the live percentage as an at-a-glance risk readout.
+-- Recomputed on each carousel redraw, so it tracks current and max HP changes.
+local function getSafetyZoneHpSuffix()
+    local manager = Roguemon.CurseManager
+    if not manager or manager.getActiveCurseId() ~= manager.CurseId.SAFETY_ZONE then
+        return ""
+    end
+    local lead = Tracker.getPokemon(1)
+    if not lead or not lead.stats or not lead.stats.hp or lead.stats.hp == 0 then
+        return ""
+    end
+    local pct = math.floor((lead.curHP or 0) / lead.stats.hp * 100)
+    return string.format(" (%d%%)", pct)
+end
+
 local function wrapText(text, pixelLimit, lineLimit, alternate)
     return Roguemon.ScreenManager.wrapPixelsInline(text, pixelLimit, lineLimit, alternate) or ""
 end
@@ -874,7 +905,7 @@ function self.register()
         end,
         getContentList = function(_)
             local curseName = getActiveCurseName() or "Unknown"
-            local text = "Curse: " .. curseName
+            local text = "Curse: " .. curseName .. getGoliathProgressSuffix() .. getSafetyZoneHpSuffix()
             TrackerScreen.Buttons[self.curseButtonKey].updatedText = text
             if Main.IsOnBizhawk() then
                 return { TrackerScreen.Buttons[self.curseButtonKey] }

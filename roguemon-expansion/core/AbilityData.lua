@@ -57,6 +57,13 @@ function self.updateResources()
         GameSettings.abilityEnhancedDescCount or 0
     )
 
+    -- ROGUEMON_PROFILE_ENABLE_MODERN_ABILITIES (bit 3) in the build profile. The
+    -- enhanced ROM descriptions are ungated and always describe modern behavior,
+    -- but Classic builds run Gen 3 ability mechanics (GEN_LATEST=GEN_3), so only
+    -- prefer the enhanced text when modern abilities are enabled; otherwise the
+    -- core tracker's Gen 3 descriptions are the accurate ones.
+    local modernAbilities = ((GameSettings.roguemonBuildProfile or 0) & 0x08) ~= 0
+
     -- Abilities that need AbilityData.Values entries.
     -- Maps ROM ability name → Values key (e.g. "Wandering Spirit" → "WanderingSpiritId").
     -- Explicit keys avoid gsub issues with hyphens ("Well-Baked Body" → "WellBakedBodyId").
@@ -115,10 +122,15 @@ function self.updateResources()
         ability.id = id
         ability.name = name
 
-        -- Lightning Rod changed behavior in Gen 5 (added Sp.Atk boost + immunity).
-        -- The core tracker pre-sets ability.description from its language file, which
-        -- blocks the __index lazy-loader below. Clear it so the enhanced ROM description wins.
-        if name == "Lightning Rod" then
+        -- The core tracker pre-sets ability.description from its Gen 3 language file,
+        -- which shadows the __index lazy-loader below. On modern builds every ability
+        -- has an enhanced ROM description (the source of truth, kept current across
+        -- gens), so clear the pre-set text and let the loader read the enhanced version.
+        -- Covers Gen 1-3 abilities whose behavior changed later: Inner Focus's Intimidate
+        -- immunity, Lightning Rod's Sp.Atk boost, and so on. On Classic builds the game
+        -- runs Gen 3 mechanics, so the core description is kept and the enhanced text is
+        -- not applied.
+        if enhancedPtr and modernAbilities then
             ability.description = nil
         end
 

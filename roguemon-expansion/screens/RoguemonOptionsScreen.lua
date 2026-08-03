@@ -44,6 +44,16 @@ local function isParentOff(def)
     return def.parent and Roguemon.OptionsManager.getValue(def.parent) == false
 end
 
+-- An entry is locked when its parent is off, or when its `disabledBy` predicate
+-- reports a blocker. Locked entries render greyed and ignore clicks. Returns
+-- the blocker reason (a string) or nil; callers only test truthiness, but the
+-- reason is what the label suffix shows.
+local function lockedReason(def)
+    if isParentOff(def) then return "" end
+    if def.disabledBy then return def.disabledBy() end
+    return nil
+end
+
 local function buildCheckboxButtons()
     local buttons = {}
     local canvasX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
@@ -63,22 +73,31 @@ local function buildCheckboxButtons()
         local btnKey = "Option" .. i
         buttons[btnKey] = {
             type = Constants.ButtonTypes.CHECKBOX,
-            getText = function() return " " .. (def.label or def.key) end,
+            getText = function(btn)
+                -- A non-empty blocker reason is appended so the player can see
+                -- WHY the entry is greyed rather than just that it is.
+                if btn.lockedReason and btn.lockedReason ~= "" then
+                    return string.format(" %s (%s)", def.label or def.key, btn.lockedReason)
+                end
+                return " " .. (def.label or def.key)
+            end,
             clickableArea = { canvasX + CHECKBOX_X + indent, y, Constants.SCREEN.RIGHT_GAP - 12 - indent, CHECKBOX_SIZE },
             box = { canvasX + CHECKBOX_X + indent, y, CHECKBOX_SIZE, CHECKBOX_SIZE },
             toggleState = Roguemon.OptionsManager.getValue(def.key) == true,
-            toggleColor = isParentOff(def) and DISABLED_COLOR or "Positive text",
-            textColor = isParentOff(def) and DISABLED_COLOR or "Default text",
+            lockedReason = lockedReason(def),
+            toggleColor = lockedReason(def) and DISABLED_COLOR or "Positive text",
+            textColor = lockedReason(def) and DISABLED_COLOR or "Default text",
             pageIndex = pageIndex,
             isVisible = function() return Pager.currentPage == pageIndex end,
             updateSelf = function(btn)
                 btn.toggleState = (Roguemon.OptionsManager.getValue(def.key) == true)
-                local off = isParentOff(def)
+                btn.lockedReason = lockedReason(def)
+                local off = btn.lockedReason ~= nil
                 btn.toggleColor = off and DISABLED_COLOR or "Positive text"
                 btn.textColor = off and DISABLED_COLOR or "Default text"
             end,
             onClick = function(btn)
-                if isParentOff(def) then return end
+                if lockedReason(def) then return end
                 -- OFF -> ON transitions may need to resolve a conflict with
                 -- another setting first (e.g. leaderboard prompting to disable
                 -- Open Book). The hook returns true to allow the toggle, false

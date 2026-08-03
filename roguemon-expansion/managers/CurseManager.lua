@@ -246,6 +246,65 @@ function self.isCurseActive(state)
     return self.getActiveCurseId(state) ~= self.CurseId.NONE
 end
 
+-- Goliath trainer ids published by ROM in OnCurseActivated for
+-- CURSE_ID_DAVID_VS_GOLIATH: u16s packed into RoguemonTrackerData.curseData,
+-- one per buffed trainer, zero-padded. Each carries exactly one buffed mon.
+function self.readGoliathTrainerIds()
+    local base = GameSettings.roguemonTrackerDataAddr
+    local offset = GameSettings.roguemonTrackerCurseDataOffset
+    local size = GameSettings.roguemonTrackerCurseDataSize
+    if not base or base == 0 then
+        return {}
+    end
+    local addr = base + offset
+    local ids = {}
+    for i = 0, math.floor(size / 2) - 1 do
+        local id = Memory.readword(addr + (i * 2))
+        if id ~= 0 then
+            table.insert(ids, id)
+        end
+    end
+    return ids
+end
+
+-- Recomputed from ROM rather than accumulated, so it stays correct across
+-- tracker reloads and savestate restores. Returns nil unless David vs Goliath
+-- is the active curse (curseData is scratch shared with other curses).
+function self.refreshGoliathProgress()
+    if self.getActiveCurseId() ~= self.CurseId.DAVID_VS_GOLIATH then
+        self.goliathProgress = nil
+        return nil
+    end
+
+    local ids = self.readGoliathTrainerIds()
+    if #ids == 0 then
+        -- Curse is active but ROM has not published yet. Leave the cache unset
+        -- so the next read retries instead of pinning an empty count.
+        self.goliathProgress = nil
+        return nil
+    end
+
+    local saveBlock1Addr = Utils.getSaveBlock1Addr()
+    local defeated = 0
+    for _, id in ipairs(ids) do
+        if Program.hasDefeatedTrainer(id, saveBlock1Addr) then
+            defeated = defeated + 1
+        end
+    end
+
+    self.goliathProgress = { defeated = defeated, total = #ids }
+    return self.goliathProgress
+end
+
+-- Cache is populated on the ROM's battle-end action and on curse state change;
+-- a nil cache means neither has run yet this load, so derive it now.
+function self.getGoliathProgress()
+    if self.goliathProgress == nil then
+        return self.refreshGoliathProgress()
+    end
+    return self.goliathProgress
+end
+
 -- Snapshot written by ROM in OnCurseActivated for CURSE_ID_DEBILITATION:
 -- 4 u16s packed into RoguemonTrackerData.curseData — chosen mon's natural
 -- and live ATK/SpA. Returns nil if the snapshot is cleared (all zeros).
@@ -711,6 +770,11 @@ function self.initCallbacks()
             Utils.printDebug("[Curse] Restoring previous theme")
             self.restorePreviousTheme()
         end
+        if prevCurse ~= newCurse then
+            -- Picks up the ids ROM publishes on activation, and clears the
+            -- cache when the curse ends.
+            self.refreshGoliathProgress()
+        end
         Program.updateRequired = true
     end
 end
@@ -776,9 +840,16 @@ function self.unregisterPoll()
 end
 
 local TRACKER_ACTION_SHOW_CURSE_INFO = 8
+local TRACKER_ACTION_GOLIATH_PROGRESS = 11
 
 function self.registerTrackerActions(actionManager)
     if not actionManager or not actionManager.registerHandler then return end
+    -- Raised by the ROM from SetBattledTrainerFlag once a Goliath trainer's
+    -- defeat flag is set, so the recount below sees the trainer just beaten.
+    actionManager.registerHandler(TRACKER_ACTION_GOLIATH_PROGRESS, function()
+        self.refreshGoliathProgress()
+        Program.updateRequired = true
+    end)
     actionManager.registerHandler(TRACKER_ACTION_SHOW_CURSE_INFO, function(arg)
         local curseId = arg or 0
         -- The ROM's action argument is authoritative. Trusting it is required
