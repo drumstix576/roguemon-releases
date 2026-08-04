@@ -133,11 +133,19 @@ end
 
 -- ROM-authoritative mirror of the in-game "RULES" option. The leaderboard
 -- cannot operate without rule enforcement, so this gates both the options
--- checkbox and isLeaderboardEnabled(). Defaults to enforced when the ROM
--- state has not been read yet, so a not-yet-populated cache never reads as a
--- rules-off run.
+-- checkbox and isLeaderboardEnabled().
+--
+-- gRoguemonTrackerData is zero-initialized EWRAM, and the ROM only derives
+-- rulesEnforced in its overworld-idle pass. That pass has not run yet when the
+-- extension primes this cache on a cold boot (close/reopen continuing from an
+-- SRAM save), so a raw 0 there means "not published yet", not "rules off". A
+-- concrete 0 is truthy in Lua, so (self.State.rulesEnforced or 1) did not
+-- rescue that case. Gate on the change counter instead: it stays 0 until the
+-- ROM publishes any field. Default to enforced until then, so a mid-run reopen
+-- does not silently drop the leaderboard before the mirror is populated.
 function self.areRulesEnforced()
-    return (self.State.rulesEnforced or 1) ~= 0
+    if (self.State.changeCounter or 0) == 0 then return true end
+    return self.State.rulesEnforced ~= 0
 end
 
 function self.setupWatches()

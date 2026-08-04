@@ -187,17 +187,23 @@ local function testRulesOffDeactivatesLeaderboard()
     return true
 end
 
--- areRulesEnforced defaults to enforced when the ROM state has not been read
--- yet, so a cold cache never reads as a rules-off run.
+-- areRulesEnforced defaults to enforced until the ROM publishes any field
+-- (changeCounter stays 0 on a cold-boot EWRAM mirror). A raw rulesEnforced=0
+-- before that means "not derived yet", not "rules off", so it must read as
+-- enforced, otherwise a mid-run reopen drops the leaderboard before the ROM's
+-- overworld-idle derive pass runs. Once the ROM has published, the mirror is
+-- authoritative.
 local function testRulesEnforcedDefaultsToTrue()
     withRestores(function(_, stubField)
         local tdm = Roguemon.TrackerDataManager
         stubField(tdm, "State", {})
         assert(tdm.areRulesEnforced() == true, "Unread ROM state must default to enforced")
         stubField(tdm, "State", { rulesEnforced = 0 })
-        assert(tdm.areRulesEnforced() == false, "rulesEnforced=0 must read as not enforced")
-        stubField(tdm, "State", { rulesEnforced = 1 })
-        assert(tdm.areRulesEnforced() == true, "rulesEnforced=1 must read as enforced")
+        assert(tdm.areRulesEnforced() == true, "Cold mirror (no publish yet) must default to enforced")
+        stubField(tdm, "State", { rulesEnforced = 0, changeCounter = 7 })
+        assert(tdm.areRulesEnforced() == false, "Published rulesEnforced=0 must read as not enforced")
+        stubField(tdm, "State", { rulesEnforced = 1, changeCounter = 7 })
+        assert(tdm.areRulesEnforced() == true, "Published rulesEnforced=1 must read as enforced")
     end)
     return true
 end

@@ -80,7 +80,17 @@ local function isActive()
 end
 
 function self.init()
-  if not self.LeaderboardUtils.isLeaderboardEnabled() then return end
+  if not self.LeaderboardUtils.isLeaderboardEnabled() then
+    -- Report which precondition kept the leaderboard from starting so a silent
+    -- no-init is diagnosable from the log. The reopen race that reads the RULES
+    -- mirror before the ROM derives it lands here, as does a plain opt-out.
+    if not Roguemon.TrackerDataManager.areRulesEnforced() then
+      Utils.printDebug("[Leaderboard] Not starting: in-game RULES are not enforced.")
+    else
+      Utils.printDebug("[Leaderboard] Not starting: the Enable Leaderboard option is off.")
+    end
+    return
+  end
 
   -- Load user credentials. Either secret (legacy) or deviceToken (modern)
   -- is sufficient; both may be present during the migration window.
@@ -103,6 +113,7 @@ function self.init()
   Utils.printDebug("[Leaderboard] Init uploader target=%s uid=%s (build=%s)",
     target, tostring(self.ROMInfo.uid), GameSettings.roguemonVersionStr or "?")
   if not FileIO.initUploader(target, self.ROMInfo.uid) then
+    Utils.printDebug("[Leaderboard] Disabled: uploader failed to start.")
     self.disabled = true
     return
   end
