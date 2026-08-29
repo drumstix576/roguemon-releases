@@ -296,13 +296,15 @@ function self.refreshGoliathProgress()
     return self.goliathProgress
 end
 
--- Cache is populated on the ROM's battle-end action and on curse state change;
--- a nil cache means neither has run yet this load, so derive it now.
+-- Always recomputed from live ROM state (curseData + trainer flags), never
+-- served from a stale cache. The GOLIATH_PROGRESS action is a lossy single-slot
+-- signal -- RoguemonTracker_RaiseAction overwrites one trackerAction slot and
+-- TrackerActionManager dispatches only whatever is in it at poll time -- so a
+-- burst of Goliath defeats drops the intermediate raises and the count would
+-- otherwise stick behind. Deriving on read keeps it correct regardless; the
+-- action and curse-state change now just force a redraw.
 function self.getGoliathProgress()
-    if self.goliathProgress == nil then
-        return self.refreshGoliathProgress()
-    end
-    return self.goliathProgress
+    return self.refreshGoliathProgress()
 end
 
 -- Snapshot written by ROM in OnCurseActivated for CURSE_ID_DEBILITATION:
