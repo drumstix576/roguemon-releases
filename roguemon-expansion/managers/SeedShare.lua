@@ -89,14 +89,19 @@ function self.decode(code)
         return nil, "Code is corrupted (checksum mismatch). Re-copy and try again."
     end
 
+    -- Checked ahead of the parse rather than inside it: the pcall below reports
+    -- every failure as a malformed code, which is the wrong thing to tell a
+    -- player whose only problem is an out-of-date extension. The length check
+    -- above guarantees this byte is present.
+    local fmt = payload:byte(1)
+    if fmt ~= FORMAT_VERSION then
+        return nil, string.format("Unsupported code version (%d). Update the RogueMon extension.", fmt)
+    end
+
     local ok, result = pcall(function()
-        local pos = 1
+        local pos = 2
         local function byte()
             local b = payload:byte(pos); pos = pos + 1; return b
-        end
-        local fmt = byte()
-        if fmt ~= FORMAT_VERSION then
-            error(string.format("Unsupported code version (%d).", fmt or -1))
         end
         local ascension = byte()
         local seed = string.unpack("<i8", payload, pos); pos = pos + 8

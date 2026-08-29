@@ -13,6 +13,7 @@ local TEST_MODULES = {
     "Template",
     "Api",
     "RunManager",
+    "SeedShare",
     "WatchManager",
     "OverrideManager",
     "SegmentManager",
