@@ -159,24 +159,31 @@ function self.drawMovesArea(data)
 	-- Gate on ROGUEMON_BATTLE_FLAG_BACKSEATING (bit 2 of roguemonFlags) which the ROM sets
 	-- atomically alongside the slot pick in OnBattleStart, avoiding a stale slot-0 flash.
 	local BACKSEATING_FLAG = 0x04  -- (1 << 2)
+	-- ROGUEMON_BATTLE_FLAG_BACKSEATING_NO_CHOICE: the ROM never opened the move menu this turn
+	-- (two-turn move release, recharge, Outrage/Uproar/Bide/Rollout lock), so the suggestion
+	-- cannot be answered and no penalty can land. Hide the icon rather than mark an inert slot.
+	local BACKSEATING_NO_CHOICE_FLAG = 0x20  -- (1 << 5)
 	if Options["Show physical special icons"] and Battle.isViewingOwn
 		and GameSettings.gBattleStructPtr and GameSettings.gBattleStructBackseatingSlot
 		and GameSettings.gBattleStructRoguemonFlags
 		and Roguemon.CurseManager.getActiveCurseId() == Roguemon.CurseManager.CurseId.BACKSEATING then
 		local bStruct = Memory.readdword(GameSettings.gBattleStructPtr)
-		if bStruct and bStruct ~= 0
-			and Utils.bit_and(Memory.readbyte(bStruct + GameSettings.gBattleStructRoguemonFlags), BACKSEATING_FLAG) ~= 0 then
-			local slot = Memory.readbyte(bStruct + GameSettings.gBattleStructBackseatingSlot)
-			if slot <= 3 then
-				local moveCatOffset = 7
-				local iconX = Constants.SCREEN.WIDTH + moveCatOffset
-				local iconY = 94 + slot * 10 + 2  -- slot is 0-indexed
-				local bgColor = Theme.COLORS["Lower box background"]
-				-- Erase the category icon area (7x7 icon + 1px shadow)
-				gui.drawRectangle(iconX, iconY, 7, 7, bgColor, bgColor)
-				-- Draw speech-bubble icon
-				Drawing.drawImageAsPixels(BACKSEATING_ICON, iconX, iconY,
-					{ Theme.COLORS["Lower box text"] }, shadowcolor)
+		if bStruct and bStruct ~= 0 then
+			local flags = Memory.readbyte(bStruct + GameSettings.gBattleStructRoguemonFlags)
+			if Utils.bit_and(flags, BACKSEATING_FLAG) ~= 0
+				and Utils.bit_and(flags, BACKSEATING_NO_CHOICE_FLAG) == 0 then
+				local slot = Memory.readbyte(bStruct + GameSettings.gBattleStructBackseatingSlot)
+				if slot <= 3 then
+					local moveCatOffset = 7
+					local iconX = Constants.SCREEN.WIDTH + moveCatOffset
+					local iconY = 94 + slot * 10 + 2  -- slot is 0-indexed
+					local bgColor = Theme.COLORS["Lower box background"]
+					-- Erase the category icon area (7x7 icon + 1px shadow)
+					gui.drawRectangle(iconX, iconY, 7, 7, bgColor, bgColor)
+					-- Draw speech-bubble icon
+					Drawing.drawImageAsPixels(BACKSEATING_ICON, iconX, iconY,
+						{ Theme.COLORS["Lower box text"] }, shadowcolor)
+				end
 			end
 		end
 	end

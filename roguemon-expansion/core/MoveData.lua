@@ -324,6 +324,12 @@ MoveData.MoveValueAdjustmentFuncs[222] = function(move, sourcePokemon, targetPok
     move.power = "RNG"
 end
 
+-- Weather Ball (311): the ROM's dynamic-moves snapshot publishes the resolved
+-- type and the 2x weather multiplier, and it honours Utility Umbrella and
+-- weather-suppressing abilities. The core tracker's own weather doubling would
+-- stack on top of that multiplier, showing 200 instead of 100.
+MoveData.MoveValueAdjustmentFuncs[MoveData.Values.WeatherBallId] = nil
+
 -- Register adjustment functions for Gen 4+ variable-power moves.
 -- These extend MoveData.MoveValueAdjustmentFuncs (keyed by move ID) so that
 -- adjustVariableMoveValues() can calculate power during battle.
