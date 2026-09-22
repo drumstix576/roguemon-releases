@@ -307,16 +307,29 @@ function LogManager.parseTrainers(logLines)
                     end
                 end
 
-                -- If ROM has no custom moves (all zero), derive from level-up learnset
+                -- If ROM has no custom moves (all zero), the game fills the moveset
+                -- at battle start in GiveBoxMonInitialMoveset: walk the learnset
+                -- forwards, stop above the mon's level, skip evolution moves
+                -- (level 0) and moves already known, and keep the last four.
                 if #moveIds == 0 then
                     local pokemonLog = RandomizerLog.Data.Pokemon[species]
                     local pokemonMoves = pokemonLog and pokemonLog.MoveSet or {}
-                    for mi = #pokemonMoves, 1, -1 do
-                        if pokemonMoves[mi].level <= level then
-                            table.insert(moveIds, 1, pokemonMoves[mi].moveId)
-                            if #moveIds >= 4 then
+                    for _, learned in ipairs(pokemonMoves) do
+                        if learned.level > level then
+                            break
+                        end
+                        local alreadyKnown = false
+                        for _, knownId in ipairs(moveIds) do
+                            if knownId == learned.moveId then
+                                alreadyKnown = true
                                 break
                             end
+                        end
+                        if learned.level ~= 0 and not alreadyKnown then
+                            if #moveIds >= 4 then
+                                table.remove(moveIds, 1)
+                            end
+                            table.insert(moveIds, learned.moveId)
                         end
                     end
                 end
@@ -518,8 +531,15 @@ end
 
 -- Override: Always prompt for the previous log (the upstream caches the first
 -- selection and never asks again). For the current log, delegate to upstream.
-function LogManager.viewLogFile(postfix)
+---@param postfix string For example: "AutoRandomized", "PreviousAttempt", "Other", or "None"
+---@param isCurrent? boolean If the log file being opened is for the game currently loaded; default will check against postfix
+function LogManager.viewLogFile(postfix, isCurrent)
+    if isCurrent == nil then
+        isCurrent = postfix == FileManager.PostFixes.AUTORANDOMIZED
+    end
+
     LogOverlay.viewedLog = postfix or "Other"
+    LogOverlay.viewingCurrentGame = isCurrent
 
     if postfix == FileManager.PostFixes.PREVIOUSATTEMPT then
         local logpath = LogManager.getLogFileFromPrompt()

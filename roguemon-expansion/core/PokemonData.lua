@@ -138,10 +138,12 @@ function self.readLevelUpMoves(pokemonID, isMoveLvls)
                 table.insert(learnedMoves, level)
             end
         else
-            -- Full move list: include everything, normalizing level 0 to 1
+            -- Full move list: include everything. Level 0 marks an evolution
+            -- move; keep it as-is so callers can apply the same rule the ROM
+            -- does in GiveBoxMonInitialMoveset.
             table.insert(learnedMoves, {
                 id = move,
-                level = level == 0 and 1 or level,
+                level = level,
             })
         end
     end
