@@ -494,6 +494,49 @@ local function testStartedRouteWithoutA3RivalNextShowsPlainTotal()
     return true
 end
 
+-- The Open Remaining shortcut acts on a lone tap, on release: holding L and then
+-- pressing R (L+R closes pop-ups), or the reverse, must not open the panel.
+local function runRemainingShortcut(frames)
+    local opened = 0
+    withRestores(function(stubGlobal, stubField)
+        local joypad = {}
+        local panel = { Buttons = { Back = { onClick = function() end } } }
+        local tracker = {}
+        stubGlobal("Options", { CONTROLS = { ["Open Remaining"] = "L" } })
+        stubGlobal("Input", { allowJoypad = true, NO_KEY_MAPPING = "",
+            getJoypadInputFormatted = function() return joypad end })
+        stubGlobal("SetupScreen", { inProcessOfBinding = function() return false end })
+        stubGlobal("Battle", { inActiveBattle = function() return false end })
+        stubGlobal("TrackerScreen", tracker)
+        stubGlobal("Program", { currentScreen = tracker,
+            changeScreenView = function(screen) opened = opened + 1 end })
+        stubField(Roguemon.Screens, "SegmentProgressScreen", panel)
+        stubField(Roguemon, "ScreenManager", {})
+        for _, held in ipairs(frames) do
+            joypad = held
+            Roguemon.SegmentUI.checkRemainingShortcut()
+        end
+    end)
+    return opened
+end
+
+local function testRemainingShortcutTapOpens()
+    assert(runRemainingShortcut({ { L = true }, { L = true }, {} }) == 1, "a lone L tap should open Remaining")
+    return true
+end
+
+local function testRemainingShortcutIgnoresLThenR()
+    assert(runRemainingShortcut({ { L = true }, { L = true, R = true }, { R = true }, {} }) == 0,
+        "L then R (L+R) should not open Remaining")
+    return true
+end
+
+local function testRemainingShortcutIgnoresRThenL()
+    assert(runRemainingShortcut({ { R = true }, { R = true, L = true }, { L = true }, {} }) == 0,
+        "R then L (L+R) should not open Remaining")
+    return true
+end
+
 function SegmentUITests.run()
     Utils.printDebug("[TEST] Running SegmentUI tests")
     local tests = Roguemon.Tests
@@ -509,6 +552,9 @@ function SegmentUITests.run()
         tests.runTest("no optional shows base segment", testNoOptionalShowsBaseSegment),
         tests.runTest("started route with A3 rival next shows hint", testStartedRouteWithA3RivalNextShowsHint),
         tests.runTest("started route without A3 rival next shows plain total", testStartedRouteWithoutA3RivalNextShowsPlainTotal),
+        tests.runTest("Open Remaining opens on a lone tap", testRemainingShortcutTapOpens),
+        tests.runTest("Open Remaining ignores L then R", testRemainingShortcutIgnoresLThenR),
+        tests.runTest("Open Remaining ignores R then L", testRemainingShortcutIgnoresRThenL),
     }
 
     local allPassed = true

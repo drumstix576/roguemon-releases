@@ -5,6 +5,7 @@ local self = {
     returnToHomeScreen = Roguemon.ScreenManager.returnToHomeScreen,
     selectedItemId = nil,
     items = {},
+    page = 1,
 }
 
 local BaseTempScreen = dofile(Roguemon.extensionDir .. "screens" .. FileManager.slash .. "BaseTempScreen.lua")
@@ -20,6 +21,13 @@ local SRS_BUTTON_HEIGHT = 10
 local SRS_LINE_HEIGHT = 10
 local SRS_LINE_COUNT = 8
 local SRS_DESC_WIDTH = 105
+-- More items than fit on one page get further pages, paged from the title row.
+local SRS_PAGER_X = 96
+local SRS_PAGER_Y = 11
+
+local function pageCount()
+    return math.max(1, math.ceil(#self.items / SRS_LINE_COUNT))
+end
 
 local function buildItemList()
     if not (self.ItemManager and self.ItemManager.getRoguemonPocketItemInstances) then
@@ -48,8 +56,9 @@ function self.drawScreen()
 
     Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 10, 10, "Inventory", Theme.COLORS["Default text"])
 
+    self.page = math.min(self.page, pageCount())
     for i = 1, SRS_LINE_COUNT do
-        local item = self.items[i]
+        local item = self.items[(self.page - 1) * SRS_LINE_COUNT + i]
         local actionKey = "Action" .. i
         local textKey = "Text" .. i
         if item then
@@ -92,9 +101,42 @@ function self.clearScreen()
     self._suppressButtons = true
     self.selectedItemId = nil
     self.items = {}
+    self.page = 1
+end
+
+local function hasPages()
+    return pageCount() > 1
 end
 
 self.Buttons = {
+    PrevPage = {
+        type = Constants.ButtonTypes.PIXELIMAGE,
+        image = Constants.PixelImages.LEFT_ARROW,
+        textColor = "Default text",
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + SRS_PAGER_X, SRS_PAGER_Y, 10, 10 },
+        isVisible = hasPages,
+        onClick = function()
+            self.page = ((self.page - 2) % pageCount()) + 1
+            Program.redraw(true)
+        end,
+    },
+    CurrentPage = {
+        type = Constants.ButtonTypes.NO_BORDER,
+        getText = function() return string.format("%s/%s", self.page, pageCount()) end,
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + SRS_PAGER_X + 11, SRS_PAGER_Y - 1, 20, 10 },
+        isVisible = hasPages,
+    },
+    NextPage = {
+        type = Constants.ButtonTypes.PIXELIMAGE,
+        image = Constants.PixelImages.RIGHT_ARROW,
+        textColor = "Default text",
+        box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + SRS_PAGER_X + 31, SRS_PAGER_Y, 10, 10 },
+        isVisible = hasPages,
+        onClick = function()
+            self.page = (self.page % pageCount()) + 1
+            Program.redraw(true)
+        end,
+    },
     Back = Drawing.createUIElementBackButton(function()
         self.returnToHomeScreen()
     end, "Default text"),

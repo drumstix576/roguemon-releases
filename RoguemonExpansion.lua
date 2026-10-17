@@ -39,51 +39,43 @@ local function RoguemonExpansionExtension()
     -- Build an absolute path to this extension's folder
     self.extensionDir = FileManager.prependDir("extensions" .. FileManager.slash .. "roguemon-expansion" .. FileManager.slash)
     self.version, self.github, self.url = loadVersionInfo(self.extensionDir)
+    -- Alpha channel in roguemon-ironmonextension, shared with Emerald (UpdateChecker).
+    self.releaseTagPrefix = ""
+    self.alphaBranch = "alpha"
     self.Paths = {
         ROGUEMON_ROM              = self.extensionDir .. "roguemon_split.gba",
         ROGUEMON_UNRAND_ROM       = self.extensionDir .. "roguemon_split_unrandomized.gba",
-        ROGUEMON_CLASSIC_ROM      = self.extensionDir .. "roguemon_classic.gba",
-        ROGUEMON_CLASSIC_UNRAND_ROM = self.extensionDir .. "roguemon_classic_unrandomized.gba",
         VANILLA_ROM               = self.extensionDir .. "vanilla.gba",
         DEBUG_LOG                 = self.extensionDir .. "roguemon_debug_log.txt",
         RANDOMIZING_STATE         = self.extensionDir .. "randomizing.State",
         RANDOMIZER_JAR            = self.extensionDir .. "randomizer.jar",
         PATCHER_JAR               = self.extensionDir .. "jbps.jar",
         ROM_BPS                   = self.extensionDir .. "roguemon_split.bps",
-        ROM_BPS_CLASSIC           = self.extensionDir .. "roguemon_classic.bps",
         IMAGES_DIRECTORY          = self.extensionDir .. "roguemon_images" .. FileManager.slash,
         GENERATED_DIR             = self.extensionDir .. "generated" .. FileManager.slash,
     }
     self.Paths.SAVED_OPTIONS = self.extensionDir .. "roguemon_options.tdat"
 
-    --- Returns the per-profile directory under generated/ that holds the
-    --- AutoRandomized ROM, its log, and the attempt-counts subfolder.
-    --- Defaults to the currently active profile when isClassic is nil.
-    function self.getGeneratedRomsDir(isClassic)
-        if isClassic == nil then isClassic = self.isClassicProfile() end
-        local sub = isClassic and "classic" or "split"
-        return self.Paths.GENERATED_DIR .. sub .. FileManager.slash
+    --- Returns the directory under generated/ that holds the AutoRandomized
+    --- ROM, its log, and the attempt-counts subfolder. It keeps the "split"
+    --- name from when a Classic profile existed, so players' attempt counts
+    --- stay where they are.
+    function self.getGeneratedRomsDir()
+        return self.Paths.GENERATED_DIR .. "split" .. FileManager.slash
     end
 
-    function self.getGeneratedAttemptsDir(isClassic)
-        return self.getGeneratedRomsDir(isClassic) .. "attempt-counts" .. FileManager.slash
+    function self.getGeneratedAttemptsDir()
+        return self.getGeneratedRomsDir() .. "attempt-counts" .. FileManager.slash
     end
 
-    --- Returns true if the currently loaded ROM is a Classic profile.
-    --- Checks the MODERN_MOVES flag (bit 2) in roguemonBuildProfile.
-    function self.isClassicProfile()
-        local profile = GameSettings and GameSettings.roguemonBuildProfile or 0
-        return (profile & 0x04) == 0  -- MODERN_MOVES flag absent
-    end
-
-    --- Returns the active ROM path based on detected profile.
+    --- Returns the active ROM path.
     function self.getActiveRomPath()
-        return self.isClassicProfile() and self.Paths.ROGUEMON_CLASSIC_ROM or self.Paths.ROGUEMON_ROM
+        return self.Paths.ROGUEMON_ROM
     end
 
-    --- Returns the source (unrandomized) ROM path based on detected profile.
+    --- Returns the source (unrandomized) ROM path.
     function self.getSourceRomPath()
-        return self.isClassicProfile() and self.Paths.ROGUEMON_CLASSIC_UNRAND_ROM or self.Paths.ROGUEMON_UNRAND_ROM
+        return self.Paths.ROGUEMON_UNRAND_ROM
     end
 
     -- Cache the pristine version of a monkey-patched field in
@@ -215,11 +207,17 @@ local function RoguemonExpansionExtension()
     self.Core.Drawing      = safeLoad(corePath .. "Drawing.lua")
     self.Core.BattleScreen = safeLoad(corePath .. "BattleDetailsScreen.lua")
     self.Core.TrackerAPI   = safeLoad(corePath .. "TrackerAPI.lua")
+    self.Core.Pickle       = safeLoad(corePath .. "Pickle.lua")
     self.Core.InfoScreen   = safeLoad(corePath .. "InfoScreen.lua")
     self.Core.TrackerScreen = safeLoad(corePath .. "TrackerScreen.lua")
     self.Core.CoverageCalcScreen = safeLoad(corePath .. "CoverageCalcScreen.lua")
     self.Core.StartupScreen = safeLoad(corePath .. "StartupScreen.lua")
     self.Core.LogTabPokemon = safeLoad(corePath .. "LogTabPokemon.lua")
+    -- Both tab modules define globals the LogOverlay override registers, so
+    -- they have to load before it.
+    self.Core.LogTabRoguemon = safeLoad(self.extensionDir .. "screens" .. FileManager.slash .. "LogTabRoguemon.lua")
+    self.Core.LogTabRoguemonDetails = safeLoad(self.extensionDir .. "screens" .. FileManager.slash .. "LogTabRoguemonDetails.lua")
+    self.Core.LogOverlay   = safeLoad(corePath .. "LogOverlay.lua")
     self.Core.HealsInBagScreen = safeLoad(corePath .. "HealsInBagScreen.lua")
     self.Core.NotebookPokemonSeen = safeLoad(corePath .. "NotebookPokemonSeen.lua")
     self.Core.NotebookIndexScreen = safeLoad(corePath .. "NotebookIndexScreen.lua")
@@ -482,6 +480,10 @@ local function RoguemonExpansionExtension()
         xpcall(self.startupInternal, self.exitGracefully)
     end
 
+    function self.inputCheckBizhawk()
+        self.SegmentUI.checkRemainingShortcut()
+    end
+
     function self.afterRedraw()
         -- Show persistent error if config validation failed
         if self.configError then
@@ -611,6 +613,12 @@ local function RoguemonExpansionExtension()
         -- without our hybrid-aware draw. Re-run via the now-wrapped override.
         if CoverageCalcScreen and CoverageCalcScreen.createButtons then
             CoverageCalcScreen.createButtons()
+        end
+
+        -- Same story for the Log Viewer's tab strip: initialize() measured it
+        -- with the Pokemon tab at two icons and without the RogueMon tab.
+        if self.Core.LogOverlay and self.Core.LogOverlay.rebuildTabStrip then
+            self.Core.LogOverlay.rebuildTabStrip()
         end
 
         -- Use 0.png (custom question mark sprite) instead of 252.png (Treecko in
@@ -784,7 +792,6 @@ local function RoguemonExpansionExtension()
         self.BuyPhaseManager.restoreCleansingState()
         self.ReminderManager.registerTrackerActions(self.TrackerActionManager)
         self.ItemManager.registerTrackerActions(self.TrackerActionManager)
-        self.RunManager.registerTrackerActions(self.TrackerActionManager)
         self.CurseManager.registerTrackerActions(self.TrackerActionManager)
 
         self.SegmentUI.register()
@@ -793,6 +800,7 @@ local function RoguemonExpansionExtension()
         end
 
         self.Core.Graphics.setIconOption()
+        self.Core.Graphics.setShinyIconPath()
 
         self.WatchManager.registerCb2Watch()
         self.WatchManager.registerMapWatch()
@@ -1140,6 +1148,7 @@ local function RoguemonExpansionExtension()
         if self.FieldStatusCarousel and self.FieldStatusCarousel.unregister then
             self.FieldStatusCarousel.unregister()
         end
+        self.Core.LogOverlay.removeTabButton()
         self.OverrideManager.restoreCoreTrackerFunctions()
 
         if self._origTryLoadData then

@@ -66,6 +66,8 @@ local function testFrameContinuityResyncsBaseline()
         local frame = 0
         stubGlobal("emu", { framecount = function() return frame end })
 
+        -- Resync the baseline: in a live session it holds the real frame count.
+        utils.checkFrameContinuity()
         frame = 100
         assert(utils.checkFrameContinuity(), "Forward frame reported as a rewind")
         frame = 200

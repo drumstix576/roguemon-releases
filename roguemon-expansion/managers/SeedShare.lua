@@ -138,7 +138,7 @@ function self.checkCompatibility(decoded)
             "Extension version differs (code: %s, yours: %s). Randomization may not reproduce.",
             decoded.extVersion, localVer)
     end
-    if localStamp and decoded.configStamp ~= localStamp then
+    if decoded.configStamp ~= localStamp then
         warnings[#warnings + 1] = string.format(
             "ROM build differs (code: 0x%08X, yours: 0x%08X). Randomization may not reproduce.",
             decoded.configStamp, localStamp)
@@ -234,7 +234,7 @@ function self.showGenerate()
             ascension = ctl.getAscension(),
             typeName = ctl.getTypeName(),
             seed = seed,
-            configStamp = GameSettings.roguemonConfigStamp or 0,
+            configStamp = GameSettings.roguemonConfigStamp,
             extVersion = tostring(Roguemon.version or "dev"),
             platform = platformCode(),
         }))

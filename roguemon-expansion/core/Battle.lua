@@ -243,6 +243,10 @@ local RGMN_EVT_MOVE_LEARNED         = 10
 -- GameSettings.leaderboardEventBeaconAddr) — written before the seqno bump
 -- so the tracker reads coherent state.
 local RGMN_EVT_LEADERBOARD          = 11
+-- Sharing is Caring handed a move from one battler to another. Payload matches
+-- MOVE_USED: the giver's species and the move. The ROM only emits it for a move
+-- in the giver's party entry, so a move it was handed reveals nothing.
+local RGMN_EVT_MOVE_REVEALED        = 12
 
 -- Flag bit index -> name lookup. Mirrors rom/include/constants/battle_ai.h.
 -- Used to make SCORE_DELTA and BEGIN output readable. Missing bits fall back
@@ -519,7 +523,7 @@ function self.onTrackerEvent(addr, value, size)
 
     if species == 0 or val <= 0 then return end
 
-    if mode == RGMN_EVT_MOVE_USED then
+    if mode == RGMN_EVT_MOVE_USED or mode == RGMN_EVT_MOVE_REVEALED then
         if val > #MoveData.Moves then return end
         -- u16 per battler, so the offset is battler * 2. Reading + battler landed on
         -- the high byte of an earlier battler's entry, which is 0 for any party index,
@@ -530,8 +534,14 @@ function self.onTrackerEvent(addr, value, size)
         -- Ensure MoveData.Values entry is populated and accurate.
         local moveName = MoveData.Moves[val].name
         MoveData.Values[moveName .. "Id"] = val
+        -- A revealed move is sitting in a traded slot right now, which is
+        -- exactly what trackerTrackMove drops, so the ROM's ruling is carried
+        -- past that filter.
+        self.recordingRevealedMove = (mode == RGMN_EVT_MOVE_REVEALED)
         trackMoveForLinkedForms(species, val, mon.level)
-        Utils.printDebug("[TrackerEvent] MOVE_USED species=%d move=%d level=%d", species, val, mon.level)
+        self.recordingRevealedMove = false
+        Utils.printDebug("[TrackerEvent] %s species=%d move=%d level=%d",
+            mode == RGMN_EVT_MOVE_REVEALED and "MOVE_REVEALED" or "MOVE_USED", species, val, mon.level)
     elseif mode == RGMN_EVT_ABILITY_REVEALED then
         if val > #AbilityData.Abilities then return end
         trackAbilityForLinkedForms(species, val)
@@ -1007,6 +1017,46 @@ function self.trackerGetViewedPokemon()
         viewSlot = Utils.inlineIf(Battle.isViewingLeft, Battle.Combatants.LeftOther, Battle.Combatants.RightOther)
     end
     return Tracker.getPokemon(viewSlot, mustViewOwn)
+end
+
+-- Sharing is Caring: a move only on loan to a battler is not part of anything's
+-- learnset, so it is not recorded against either species. The ROM marks a
+-- traded slot in mimickedMoves, the same flag it uses for Mimic.
+local function isTradedMove(moveId)
+    local CurseManager = Roguemon and Roguemon.CurseManager
+    if not (CurseManager and CurseManager.CurseId
+        and CurseManager.getActiveCurseId() == CurseManager.CurseId.SHARING_IS_CARING) then
+        return false
+    end
+    if not (GameSettings.gDisableStructs and GameSettings.disableStructEntrySize
+        and GameSettings.mimickedMovesOffset and GameSettings.gBattleMons
+        and GameSettings.battleMonMovesOffset) then
+        return false
+    end
+
+    for battler = 0, (Battle.numBattlers or 2) - 1 do
+        local marked = Memory.readbyte(GameSettings.gDisableStructs
+            + battler * GameSettings.disableStructEntrySize + GameSettings.mimickedMovesOffset)
+        local monAddress = GameSettings.gBattleMons + battler * GameSettings.sizeofBattlePokemon
+        for slot = 0, 3 do
+            if marked & (1 << slot) ~= 0
+                and Memory.readword(monAddress + GameSettings.battleMonMovesOffset + slot * 2) == moveId then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function self.trackerTrackMove(pokemonID, moveId, level)
+    if not self.recordingRevealedMove and Battle.inActiveBattle() and isTradedMove(moveId) then
+        return
+    end
+    local original = _G.__roguemonCoreOriginals and _G.__roguemonCoreOriginals["Tracker.TrackMove"]
+    if original then
+        return original(pokemonID, moveId, level)
+    end
 end
 
 function self.updateTrackedInfo()

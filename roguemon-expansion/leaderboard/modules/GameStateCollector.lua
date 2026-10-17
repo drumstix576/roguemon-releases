@@ -5,7 +5,6 @@ function self.setROMInfo()
   Roguemon.Leaderboard.ROMInfo.uid = uid
   Roguemon.Leaderboard.ROMInfo.ascension = ascension
   Roguemon.Leaderboard.ROMInfo.typeIndex = typeIndex
-  Roguemon.Leaderboard.ROMInfo.isClassic = Roguemon.isClassicProfile()
   Roguemon.Leaderboard.ROMInfo.seed = Main.currentSeed
 end
 

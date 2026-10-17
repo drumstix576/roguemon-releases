@@ -23,6 +23,8 @@ local self = {
         SHOP_STAGE_PURGE = 21,
         SET_REDUCE_ANIMATIONS = 22,
         END_RUN_LEADERBOARD = 23,
+        LOG_SEGMENT_QUERY = 24,
+        LOG_ITEM_QUERY = 25,
     },
     -- Checklist step bits (must match ROM ROGUEMON_CHECKLIST_* in constants/roguemon.h)
     ChecklistSteps = {
@@ -152,6 +154,21 @@ end
 -- while one is queued is a no-op.
 function self.endRunOnLeaderboard()
     return self.enqueueCommand(self.Commands.END_RUN_LEADERBOARD, 0, 0, 0, true)
+end
+
+-- Ask the ROM what items sit on a segment's maps and what prizes it offers, for
+-- the Log Viewer. Not deduped: dedup matches on command id alone, so a second
+-- request for a different segment would be silently dropped while the first is
+-- still queued.
+function self.requestLogSegmentQuery(segId)
+    return self.enqueueCommand(self.Commands.LOG_SEGMENT_QUERY, segId or 0, 0, 0)
+end
+
+-- Resolve every segment's item flags in one ROM map walk, for the Log Viewer's
+-- item-name search. Deduped: it takes no arguments, so a second request while
+-- one is queued would only repeat the same work.
+function self.requestLogItemQuery()
+    return self.enqueueCommand(self.Commands.LOG_ITEM_QUERY, 0, 0, 0, true)
 end
 
 return self

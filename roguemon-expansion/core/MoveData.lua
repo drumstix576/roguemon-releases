@@ -177,14 +177,6 @@ function self.readMoveInfoFromMemory(moveId, enhancedDescPtrs, bulkBuf, bulkMove
         _summaryPtr = summaryPtr,
     }
 
-    -- In Classic mode (Gen 3 physical/special split), override per-move category
-    -- with type-based category. STATUS moves keep their per-move category.
-    if Roguemon and Roguemon.isClassicProfile and Roguemon.isClassicProfile() then
-        if move.category ~= MoveData.Categories.STATUS then
-            move.category = MoveData.TypeToCategory[move.type] or move.category
-        end
-    end
-
     return attachLazyStrings(move)
 
 end
@@ -211,30 +203,17 @@ function self.updateResources()
 end
 
 function self.buildData(forced)
-    local isClassic = Roguemon and Roguemon.isClassicProfile and Roguemon.isClassicProfile()
-
-    -- Gen 6+: Steel lost resistance to Dark and Ghost.
-    -- In Classic mode, keep the Gen 3 resistances (0.5). In Expansion, remove them (nil → defaults to 1.0).
-    if isClassic then
-        MoveData.TypeToEffectiveness.dark.steel  = 0.5
-        MoveData.TypeToEffectiveness.ghost.steel = 0.5
-    else
-        MoveData.TypeToEffectiveness.dark.steel  = nil
-        MoveData.TypeToEffectiveness.ghost.steel = nil
-    end
+    -- Gen 6+: Steel lost resistance to Dark and Ghost. Remove the core's Gen 3
+    -- resistances (nil defaults to 1.0).
+    MoveData.TypeToEffectiveness.dark.steel  = nil
+    MoveData.TypeToEffectiveness.ghost.steel = nil
 
     -- Gen 5+: Future Sight, Beat Up, and Doom Desire became typed (STAB + type effectiveness apply).
-    -- In Classic mode, keep the Gen 3 typeless flags. In Expansion, clear them so the tracker
-    -- shows STAB and type matchups (matching the ROM's DoFutureSightAttackDamageCalc et al.).
-    if isClassic then
-        MoveData.IsTypelessMove["248"] = true  -- Future Sight
-        MoveData.IsTypelessMove["251"] = true  -- Beat Up
-        MoveData.IsTypelessMove["353"] = true  -- Doom Desire
-    else
-        MoveData.IsTypelessMove["248"] = nil
-        MoveData.IsTypelessMove["251"] = nil
-        MoveData.IsTypelessMove["353"] = nil
-    end
+    -- Clear the core's typeless flags so the tracker shows STAB and type matchups
+    -- (matching the ROM's DoFutureSightAttackDamageCalc et al.).
+    MoveData.IsTypelessMove["248"] = nil
+    MoveData.IsTypelessMove["251"] = nil
+    MoveData.IsTypelessMove["353"] = nil
 
     if forced then
         MoveData.Moves = {}
@@ -550,7 +529,6 @@ MoveData.TypeToEffectiveness.dark.fairy     = 0.5
 MoveData.TypeToEffectiveness.poison.fairy   = 2
 MoveData.TypeToEffectiveness.steel.fairy    = 2
 
--- Steel vs Dark/Ghost resistance patching is handled in updateResources()
--- based on the active profile (Expansion removes resistance, Classic keeps it).
+-- Steel vs Dark/Ghost resistance patching is handled in updateResources().
 
 return self

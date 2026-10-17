@@ -68,7 +68,7 @@ function self.collectAndWriteRunData(actionCode, currentTrainer)
   info.ascension     = ROMInfo.ascension
   info.initial_type  = ROMInfo.typeIndex
   info.rom_uid       = ROMInfo.uid
-  info.is_classic    = ROMInfo.isClassic
+  info.is_classic    = false  -- Classic was removed; the field stays in the upload format
   info.seed          = ROMInfo.seed
 
   -- Active Pokemon

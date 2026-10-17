@@ -1,104 +1,201 @@
 local self = {}
 
+-- Ids resolved from the ROM's own tables by name, never written as literals: the
+-- expansion renumbers moves and abilities, so an id list silently starts
+-- describing different entries after a ROM bump. Names are compared with case
+-- and punctuation stripped, so "V-Create", "Power-Up Punch" and "Dragon's Maw"
+-- match however the text decoder renders them.
+local function normalizeName(name)
+    return name and (name:lower():gsub("%W", "")) or ""
+end
+
+-- Built on first use, never at load: MoveData.Moves and AbilityData.Abilities are
+-- populated from ROM memory, so a scan that ran at load would cache an empty
+-- table for the rest of the session.
+local moveIdsByName
+local function getMoveIdsByName()
+    if moveIdsByName then
+        return moveIdsByName
+    end
+    local resolved, count = {}, 0
+    for id = 1, MoveData.getTotal(), 1 do
+        local move = MoveData.Moves[id]
+        if move and move.name then
+            resolved[normalizeName(move.name)] = id
+            count = count + 1
+        end
+    end
+    if count == 0 then
+        return nil
+    end
+    moveIdsByName = resolved
+    return moveIdsByName
+end
+
+--- Returns a predicate over move ids for a list of move names.
+--- @param names table Move names as the ROM spells them
+--- @return function (moveId) -> boolean
+local function moveNameSet(names)
+    local cached
+    return function(moveId)
+        if not moveId then
+            return false
+        end
+        if not cached then
+            local byName = getMoveIdsByName()
+            if not byName then
+                return false
+            end
+            local resolved = {}
+            for _, name in ipairs(names) do
+                local id = byName[normalizeName(name)]
+                if id then
+                    resolved[id] = true
+                end
+            end
+            if next(resolved) == nil then
+                return false
+            end
+            cached = resolved
+        end
+        return cached[moveId] == true
+    end
+end
+
 -- Multi-hit moves affected by Skill Link (EFFECT_MULTI_HIT, 2-5 hits -> always 5).
-local SKILL_LINK_MOVES = {
-    [3]   = true, -- Double Slap
-    [4]   = true, -- Comet Punch
-    [41]  = true, -- Twineedle
-    [42]  = true, -- Pin Missile
-    [131] = true, -- Spike Cannon
-    [140] = true, -- Barrage
-    [154] = true, -- Fury Swipes
-    [198] = true, -- Bone Rush
-    [292] = true, -- Arm Thrust
-    [331] = true, -- Bullet Seed
-    [333] = true, -- Icicle Spear
-    [350] = true, -- Rock Blast
-    [541] = true, -- Tail Slap
-    [594] = true, -- Water Shuriken
-    [727] = true, -- Scale Shot
-    [788] = true, -- Population Bomb
-}
+local isSkillLinkMove = moveNameSet({
+    "Double Slap", "Comet Punch", "Twineedle", "Pin Missile", "Spike Cannon",
+    "Barrage", "Fury Swipes", "Bone Rush", "Arm Thrust", "Bullet Seed",
+    "Icicle Spear", "Rock Blast", "Tail Slap", "Water Shuriken", "Scale Shot",
+    "Population Bomb",
+})
 
 -- Unified ability-move synergy table.
 -- Each entry: test(moveId, move, pokemonTypes) -> bool, mult, label.
 -- test() receives the move object from MoveData.Moves and the pokemon's type table.
-local ABILITY_SYNERGIES = {
+--
+-- Keyed by ability NAME, not id: the expansion renumbers abilities, so a literal
+-- id silently starts describing a different ability after a ROM bump. Keys are
+-- normalised (lowercased, non-alphanumerics stripped) so they match however the
+-- ROM's text decoder renders punctuation, e.g. "Dragon's Maw".
+local ABILITY_SYNERGIES_BY_NAME = {
     -- Move-flag synergies (parsed from ROM move data)
-    [89]  = { label = "Iron Fist",     mult = 1.15, test = function(id, m) return m.punchingMove end },
-    [173] = { label = "Strong Jaw",    mult = 1.15, test = function(id, m) return m.bitingMove end },
-    [178] = { label = "Mega Launcher", mult = 1.15, test = function(id, m) return m.pulseMove end },
-    [181] = { label = "Tough Claws",   mult = 1.15, test = function(id, m) return m.iscontact end },
-    [244] = { label = "Punk Rock",     mult = 1.15, test = function(id, m) return m.soundMove end },
-    [292] = { label = "Sharpness",     mult = 1.15, test = function(id, m) return m.slicingMove end },
-    [120] = { label = "Reckless",      mult = 1.15, test = function(id, m) return MoveData.isRecoil(id) end },
+    ["ironfist"]     = { label = "Iron Fist",     mult = 1.15, test = function(id, m) return m.punchingMove end },
+    ["strongjaw"]    = { label = "Strong Jaw",    mult = 1.15, test = function(id, m) return m.bitingMove end },
+    ["megalauncher"] = { label = "Mega Launcher", mult = 1.15, test = function(id, m) return m.pulseMove end },
+    ["toughclaws"]   = { label = "Tough Claws",   mult = 1.15, test = function(id, m) return m.iscontact end },
+    ["punkrock"]     = { label = "Punk Rock",     mult = 1.15, test = function(id, m) return m.soundMove end },
+    ["sharpness"]    = { label = "Sharpness",     mult = 1.15, test = function(id, m) return m.slicingMove end },
+    ["reckless"]     = { label = "Reckless",      mult = 1.15, test = function(id, m) return MoveData.isRecoil(id) end },
     -- Technician: 1.5x in-game on moves with base power <= 60
-    [101] = { label = "Technician",    mult = 1.15, test = function(id, m)
+    ["technician"]   = { label = "Technician",    mult = 1.15, test = function(id, m)
         local p = tonumber(m.power) or 0; return p > 0 and p <= 60
     end },
     -- Adaptability: STAB 1.5x -> 2x in-game; extra boost on type-matching moves
-    [91]  = { label = "Adaptability",  mult = 1.15, test = function(id, m, types)
+    ["adaptability"] = { label = "Adaptability",  mult = 1.15, test = function(id, m, types)
         return types and Utils.isSTAB(m, m.type, types)
     end },
     -- Skill Link: multi-hit moves always hit max times (5/3.17 ~ 1.58x effective)
-    [92]  = { label = "Skill Link",    mult = 1.20, test = function(id) return SKILL_LINK_MOVES[id] end },
+    ["skilllink"]    = { label = "Skill Link",    mult = 1.20, test = function(id) return isSkillLinkMove(id) end },
     -- -ate abilities: Normal moves gain retyping + 1.2x power in-game
-    [184] = { label = "Aerilate",      mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
-    [182] = { label = "Pixilate",      mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
-    [174] = { label = "Refrigerate",   mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
-    [206] = { label = "Galvanize",     mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
+    ["aerilate"]     = { label = "Aerilate",      mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
+    ["pixilate"]     = { label = "Pixilate",      mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
+    ["refrigerate"]  = { label = "Refrigerate",   mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
+    ["galvanize"]    = { label = "Galvanize",     mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.NORMAL end },
     -- Type-power boosters
-    [200] = { label = "Steelworker",   mult = 1.15, test = function(id, m) return m.type == PokemonData.Types.STEEL end },
-    [263] = { label = "Dragon's Maw",  mult = 1.15, test = function(id, m) return m.type == PokemonData.Types.DRAGON end },
-    [262] = { label = "Transistor",    mult = 1.15, test = function(id, m) return m.type == PokemonData.Types.ELECTRIC end },
+    ["steelworker"]  = { label = "Steelworker",   mult = 1.15, test = function(id, m) return m.type == PokemonData.Types.STEEL end },
+    ["dragonsmaw"]   = { label = "Dragon's Maw",  mult = 1.15, test = function(id, m) return m.type == PokemonData.Types.DRAGON end },
+    ["transistor"]   = { label = "Transistor",    mult = 1.15, test = function(id, m) return m.type == PokemonData.Types.ELECTRIC end },
     -- Water Bubble: 2x Water damage in-game (defensive Fire immunity handled separately)
-    [199] = { label = "Water Bubble",  mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.WATER end },
+    ["waterbubble"]  = { label = "Water Bubble",  mult = 1.20, test = function(id, m) return m.type == PokemonData.Types.WATER end },
 }
 
--- Contrary (ability 126) flips stat changes. Moves that lower the user's own
--- stats become beneficial; moves that raise the user's own stats become harmful.
-local CONTRARY_ABILITY_ID = 126
+local abilityIdsByName
+local function abilityIdFor(normalizedName)
+    if not abilityIdsByName then
+        local resolved, count = {}, 0
+        for id = 1, AbilityData.getTotal(), 1 do
+            local ability = AbilityData.Abilities[id]
+            if ability and ability.name then
+                resolved[normalizeName(ability.name)] = id
+                count = count + 1
+            end
+        end
+        if count == 0 then
+            return nil
+        end
+        abilityIdsByName = resolved
+    end
+    return abilityIdsByName[normalizedName]
+end
+
+local synergiesById
+local function getAbilitySynergy(abilityId)
+    if not abilityId or abilityId == 0 then
+        return nil
+    end
+    if not synergiesById then
+        local resolved = {}
+        for name, entry in pairs(ABILITY_SYNERGIES_BY_NAME) do
+            local id = abilityIdFor(name)
+            if id then
+                resolved[id] = entry
+            end
+        end
+        if next(resolved) == nil then
+            return nil
+        end
+        synergiesById = resolved
+    end
+    return synergiesById[abilityId]
+end
+
+-- Contrary flips stat changes. Moves that lower the user's own stats become
+-- beneficial; moves that raise the user's own stats become harmful.
+local function isContraryAbility(abilityId)
+    return abilityId ~= nil and abilityId ~= 0 and abilityId == abilityIdFor("contrary")
+end
 local CONTRARY_BOOST = 1.15   -- applied to self-lowering moves (drawback -> buff)
 local CONTRARY_PENALTY = 0.85 -- applied to self-raising moves (buff -> drawback)
 
 -- Attacking moves with guaranteed self-stat-lowering secondary effects (.self=TRUE, chance=0).
 -- With Contrary these stat drops become stat boosts, making the moves strictly better.
-local CONTRARY_SELF_LOWER_MOVES = {
-    [276]  = true, -- Superpower       (ATK-1, DEF-1)
-    [315]  = true, -- Overheat          (SPA-2)
-    [354]  = true, -- Psycho Boost      (SPA-2)
-    [359]  = true, -- Hammer Arm        (SPE-1)
-    [370]  = true, -- Close Combat      (DEF-1, SPDEF-1)
-    [434]  = true, -- Draco Meteor      (SPA-2)
-    [437]  = true, -- Leaf Storm        (SPA-2)
-    [557]  = true, -- V-Create          (DEF-1, SPDEF-1, SPE-1)
-    [620]  = true, -- Dragon Ascent     (DEF-1, SPDEF-1)
-    [621]  = true, -- Hyperspace Fury   (DEF-1)
-    [628]  = true, -- Ice Hammer        (SPE-1)
-    [654]  = true, -- Clanging Scales   (DEF-1)
-    [659]  = true, -- Fleur Cannon      (SPA-2)
-    [766]  = true, -- Headlong Rush     (DEF-1, SPDEF-1)
-    [787]  = true, -- Spin Out          (SPE-2)
-    [802]  = true, -- Make It Rain      (SPA-1)
-    [816]  = true, -- Armor Cannon      (DEF-1, SPDEF-1)
-}
+local isContrarySelfLowerMove = moveNameSet({
+    "Superpower",       -- ATK-1, DEF-1
+    "Overheat",         -- SPA-2
+    "Psycho Boost",     -- SPA-2
+    "Hammer Arm",       -- SPE-1
+    "Close Combat",     -- DEF-1, SPDEF-1
+    "Draco Meteor",     -- SPA-2
+    "Leaf Storm",       -- SPA-2
+    "V-Create",         -- DEF-1, SPDEF-1, SPE-1
+    "Dragon Ascent",    -- DEF-1, SPDEF-1
+    "Hyperspace Fury",  -- DEF-1
+    "Ice Hammer",       -- SPE-1
+    "Clanging Scales",  -- DEF-1
+    "Fleur Cannon",     -- SPA-2
+    "Headlong Rush",    -- DEF-1, SPDEF-1
+    "Spin Out",         -- SPE-2
+    "Make It Rain",     -- SPA-1
+    "Armor Cannon",     -- DEF-1, SPDEF-1
+})
 
--- Attacking moves with guaranteed self-stat-raising secondary effects (.self=TRUE, chance=100 or 0).
--- With Contrary these stat boosts become stat drops, making the moves worse.
-local CONTRARY_SELF_RAISE_MOVES = {
-    [130]  = true, -- Skull Bash        (DEF+1)
-    [488]  = true, -- Flame Charge      (SPE+1)
-    [612]  = true, -- Power-Up Punch    (ATK+1)
-    [711]  = true, -- Aura Wheel        (SPE+1)
-    [728]  = true, -- Meteor Beam       (SPA+1)
-    [756]  = true, -- Psyshield Bash    (DEF+1)
-    [760]  = true, -- Mystical Power    (SPA+1)
-    [768]  = true, -- Esper Wing        (SPE+1)
-    [799]  = true, -- Torch Song        (SPA+1)
-    [800]  = true, -- Aqua Step         (SPE+1)
-    [811]  = true, -- Trailblaze        (SPE+1)
-    [833]  = true, -- Electro Shot      (SPA+1)
-}
+-- Attacking moves with guaranteed self-stat-raising secondary effects. With
+-- Contrary these become stat drops, making the moves worse.
+local isContrarySelfRaiseMove = moveNameSet({
+    "Skull Bash",       -- DEF+1
+    "Flame Charge",     -- SPE+1
+    "Power-Up Punch",   -- ATK+1
+    "Aura Wheel",       -- SPE+1
+    "Meteor Beam",      -- SPA+1
+    "Psyshield Bash",   -- DEF+1
+    "Mystical Power",   -- SPA+1
+    "Esper Wing",       -- SPE+1
+    "Torch Song",       -- SPA+1
+    "Aqua Step",        -- SPE+1
+    "Trailblaze",       -- SPE+1
+    "Electro Shot",     -- SPA+1
+})
 
 function self.printRatingBreakdown(gachamon)
     if not gachamon then return end
@@ -111,7 +208,7 @@ function self.printRatingBreakdown(gachamon)
     local abilityInfo = AbilityData.Abilities[abilityId]
     local abilityName = abilityInfo and abilityInfo.name or ("ID:" .. abilityId)
     local pokemonName = pokemonInternal.name or ("Pokemon #" .. (gachamon.PokemonId or 0))
-    local synergy = ABILITY_SYNERGIES[abilityId]
+    local synergy = getAbilitySynergy(abilityId)
 
     local function fmt(n)
         return string.format("%.2f", n)
@@ -268,11 +365,11 @@ function self.printRatingBreakdown(gachamon)
 
         -- Apply Contrary synergy (mirrors calculateRatingScore behavior)
         local contraryNote = nil
-        if abilityId == CONTRARY_ABILITY_ID and baseRating > 0 then
-            if CONTRARY_SELF_LOWER_MOVES[id] then
+        if isContraryAbility(abilityId) and baseRating > 0 then
+            if isContrarySelfLowerMove(id) then
                 baseRating = baseRating * CONTRARY_BOOST
                 contraryNote = string.format("Contrary boost x%.2f (self-lower -> buff)", CONTRARY_BOOST)
-            elseif CONTRARY_SELF_RAISE_MOVES[id] then
+            elseif isContrarySelfRaiseMove(id) then
                 baseRating = baseRating * CONTRARY_PENALTY
                 contraryNote = string.format("Contrary penalty x%.2f (self-raise -> nerf)", CONTRARY_PENALTY)
             end
@@ -583,7 +680,7 @@ function self.calculateRatingScore(gachamon, baseStats)
 
     -- Ability-move synergies: temporarily scale qualifying move ratings before
     -- calling the original function so the bonus flows through the full pipeline.
-    local synergy = ABILITY_SYNERGIES[abilityId]
+    local synergy = getAbilitySynergy(abilityId)
     if synergy then
         local pokemonTypes = PokemonData.getNatDexCompatible(gachamon.PokemonId).types or {}
         for _, moveId in ipairs(moveIds) do
@@ -596,13 +693,13 @@ function self.calculateRatingScore(gachamon, baseStats)
     end
 
     -- Contrary: boost self-lowering moves, penalize self-raising moves
-    if abilityId == CONTRARY_ABILITY_ID then
+    if isContraryAbility(abilityId) then
         for _, moveId in ipairs(moveIds) do
             if RS.Moves[moveId] and not savedRatings[moveId] then
-                if CONTRARY_SELF_LOWER_MOVES[moveId] then
+                if isContrarySelfLowerMove(moveId) then
                     savedRatings[moveId] = RS.Moves[moveId]
                     RS.Moves[moveId] = RS.Moves[moveId] * CONTRARY_BOOST
-                elseif CONTRARY_SELF_RAISE_MOVES[moveId] then
+                elseif isContrarySelfRaiseMove(moveId) then
                     savedRatings[moveId] = RS.Moves[moveId]
                     RS.Moves[moveId] = RS.Moves[moveId] * CONTRARY_PENALTY
                 end
@@ -624,7 +721,7 @@ end
 -- Override: when a Roguemon ascension is active (1-3), force the GachaMon
 -- ruleset to AscensionN. The vanilla auto-detect matches against the New Run
 -- profile/settings filename ("Ascension 1"), which Roguemon's profile names
--- ("RogueMon Split"/"RogueMon Classic") and settings filenames ("a1-Random.rnqs")
+-- ("RogueMon Split") and settings filenames ("a1-Random.rnqs")
 -- don't satisfy. Without this, ratings fall back to the default ruleset (Kaizo)
 -- and the ROM-driven extensions to Ascension* BannedMoves/AdjustedMoves are
 -- never applied.

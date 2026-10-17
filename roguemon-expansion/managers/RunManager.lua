@@ -269,10 +269,8 @@ function self.stampRomFile(romFilePath, ascension, runType)
 end
 
 local SPLIT_PROFILE_ID = "8cca5a43-967c-469a-858b-123456789abc"
-local CLASSIC_PROFILE_ID   = "8cca5a43-967c-469a-858b-000000000001"
-local TRACKER_ACTION_SWITCH_PROFILE = 4
 
--- Manages static run profiles for RogueMon Split and Classic.
+-- Manages the static RogueMon Split run profile.
 -- Actions are idempotent.
 function self.setupRunProfile()
     local ext = Roguemon
@@ -283,11 +281,10 @@ function self.setupRunProfile()
     Options.FILES["Randomizer JAR"]   = ext.Paths.RANDOMIZER_JAR
     Options.FILES["Source ROM"]       = ext.getSourceRomPath()
 
-    local isClassic = ext.isClassicProfile()
-    -- Per-profile subdirectories ship with the extension (kept via .gitkeep);
+    -- The generated subdirectories ship with the extension (kept via .gitkeep);
     -- skip FileManager.createFolder so we don't pay an OS spawn per startup.
-    Options.Overrides["ROMs and Logs"] = ext.getGeneratedRomsDir(isClassic)
-    Options.Overrides["Attempt Counts"] = ext.getGeneratedAttemptsDir(isClassic)
+    Options.Overrides["ROMs and Logs"] = ext.getGeneratedRomsDir()
+    Options.Overrides["Attempt Counts"] = ext.getGeneratedAttemptsDir()
 
     local splitProfile = QuickloadScreen.IProfile:new({
         Name = "RogueMon Split",
@@ -301,75 +298,18 @@ function self.setupRunProfile()
         }
     })
 
-    local classicProfile = QuickloadScreen.IProfile:new({
-        Name = "RogueMon Classic",
-        Mode = "Generate",
-        GameVersion = "firered",
-        GameOverCondition = Options["Game Over condition"],
-        GUID = CLASSIC_PROFILE_ID,
-        Paths = {
-            Rom = ext.Paths.ROGUEMON_CLASSIC_UNRAND_ROM,
-            Jar = Options.FILES["Randomizer JAR"],
-        }
-    })
-
     if ascension > 0 then
         local settingsFile = self.getSettingsFilePath(ascension, typeIndex)
         Options.FILES["Settings File"] = settingsFile
         splitProfile.Paths.Settings = settingsFile
-        classicProfile.Paths.Settings = settingsFile
     end
 
-    QuickloadScreen.addUpdateProfile(splitProfile, not isClassic)
-    QuickloadScreen.addUpdateProfile(classicProfile, isClassic)
+    QuickloadScreen.addUpdateProfile(splitProfile, true)
 
-    -- Restore BizHawk master sound after a mode switch or ROM patch.
+    -- Restore BizHawk master sound after a ROM patch.
     -- Sound is disabled before client.openrom() and the full tracker restart
     -- wipes Utils.wasSoundOn. The sound state is persisted to a flag file.
     self.restoreSoundState()
-end
-
-function self.registerTrackerActions(actionManager)
-    if not actionManager or not actionManager.registerHandler then return end
-
-    actionManager.registerHandler(TRACKER_ACTION_SWITCH_PROFILE, function(arg)
-        local ext = Roguemon
-        local isCurrentlyClassic = ext.isClassicProfile()
-
-        -- Target the OTHER profile's active ROM
-        local targetRom = isCurrentlyClassic
-            and ext.Paths.ROGUEMON_ROM
-            or ext.Paths.ROGUEMON_CLASSIC_ROM
-
-        -- Persist sound state to a flag file before the full tracker restart
-        -- (Main.Run() wipes Utils.wasSoundOn; ROM stamping used the wrong
-        -- config address for the target ROM).
-        self.saveSoundState()
-
-        -- Mark a clean exit so the crash recovery screen doesn't trigger on the new ROM
-        CrashRecoveryScreen.logCrashReport(false)
-
-        -- Tear down extension state before loading the new ROM.
-        -- Core tracker functions were monkey-patched by overrideCoreTrackerFunctions()
-        -- and use RogueMon-specific GameSettings addresses (gSpeciesInfo, gMovesInfo,
-        -- etc.) that are only valid for the CURRENT ROM. If we don't restore them,
-        -- Main.Run() → FileManager.executeEachFile("initialize") calls the overridden
-        -- buildData/readMoveInfoFromMemory/etc. with stale addresses from the old ROM,
-        -- producing "attempted read outside memory size" warnings.
-        ext.OverrideManager.restoreCoreTrackerFunctions()
-        ext.UpdateManager.shutdown()
-        ext.WatchManager.unregisterCb2Watch()
-        ext.WatchManager.unregisterMapWatch()
-        ext.WatchManager.unregisterFieldWatch()
-        ext.WatchManager.unregisterPartyWatch()
-        ext.WatchManager.unregisterDma3DiagWatch()
-
-        -- Load the other ROM immediately (no savestate save/restore)
-        client.SetSoundOn(false)
-        client.openrom(targetRom)
-        diagBeforeMainRun("profile switch")
-        Main.Run()
-    end)
 end
 
 function self.getRomStamp()

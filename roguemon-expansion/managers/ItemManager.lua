@@ -382,6 +382,48 @@ function self.dumpRoguemonPocket()
     self.dumpPocket(self.Pocket.Roguemon)
 end
 
+--- The move a TM item teaches, or nil if the item is not a TM.
+---
+--- A TM is more usefully described by its move than by its own text, so both
+--- the pickup notification and the Log Viewer's item list route through here.
+function self.getTmMoveId(itemId)
+    local tmStart = GameSettings.TMItemStartIndex
+    local tmCount = GameSettings.tmCount
+    if not (tmStart and tmCount) then
+        return nil
+    end
+    if itemId < tmStart or itemId >= tmStart + tmCount then
+        return nil
+    end
+
+    local moveId = Program.getMoveIdFromTMHMNumber(itemId - tmStart + 1)
+    if not moveId or moveId <= 0 then
+        return nil
+    end
+    return moveId
+end
+
+--- An item's name for display, with a TM's move in brackets - "TM05 (Light
+--- Screen)". The move is what makes one TM different from another, so the
+--- Log Viewer's list and its item-name search both read it from here.
+function self.getDisplayItemName(itemId)
+    local name = MiscData.Items[itemId]
+    if not name then
+        return nil
+    end
+
+    local moveId = self.getTmMoveId(itemId)
+    if not moveId then
+        return name
+    end
+
+    local move = MoveData.Moves[moveId]
+    if not move or not move.name then
+        return name
+    end
+    return string.format("%s (%s)", name, move.name)
+end
+
 function self.getItemPocket(itemId)
     if not itemId or itemId <= 0 then
         return nil
@@ -485,15 +527,10 @@ function self.handleItemObtained(itemId)
     -- TM items: always show the move info screen regardless of "Show item descriptions".
     -- The ROM gates this raise on the "Mask Gym TM names" setting (it never raises
     -- ITEM_OBTAINED for a gym-leader TM when masking is on), so no filter here.
-    local tmStart = GameSettings.TMItemStartIndex
-    local tmCount = GameSettings.tmCount
-    if tmStart and tmCount and itemId >= tmStart and itemId < tmStart + tmCount then
-        local tmNum = itemId - tmStart + 1
-        local moveId = Program.getMoveIdFromTMHMNumber(tmNum)
-        if moveId and moveId > 0 then
-            Roguemon.ScreenManager.showMoveInfo(moveId)
-            return
-        end
+    local moveId = self.getTmMoveId(itemId)
+    if moveId then
+        Roguemon.ScreenManager.showMoveInfo(moveId)
+        return
     end
 
     -- Non-TM items: respect the "Show item descriptions" option

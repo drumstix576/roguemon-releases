@@ -6,6 +6,10 @@ local self = {
     trainerCarouselOriginal = nil,
     hiddenCarouselOriginals = nil,
     skullIcon = nil,
+    -- The purple the curse menu button turns when a curse is active. Named here
+    -- because the Log Viewer's segment list draws the same skull in the same
+    -- colour and the two must not drift apart.
+    curseActiveColor = 0xFFDD00FF,
 }
 
 local FLAG_STARTED = 0x01
@@ -663,7 +667,116 @@ function self.restoreCoreCarousels()
     self.hiddenCarouselOriginals = nil
 end
 
+-- "Open Remaining": a control in the core tracker's Controls tab, injected
+-- here because the core is read-only. It reuses the core's row and binding
+-- prompt, the core saves it with the other controls, and a saved binding is
+-- read back from the parsed Settings.ini (the core loads only the controls it
+-- knew at startup). With the extension disabled the core ignores the key and
+-- keeps it on save.
+local REMAINING_CONTROL = "Open Remaining"
+local REMAINING_DEFAULT = "L"
+-- The shortcut acts on release, and only for a tap: if any other button was
+-- down while it was held (e.g. L+R, which closes pop-ups), it does nothing.
+local remainingShortcutHeld = false
+local remainingShortcutChorded = false
+
+-- Sets the Controls tab's single-button rows (the core's and ours) to rowY(i).
+-- A row's text spans y - 2 .. y - 2 + Font.SIZE, so the core's spacing leaves
+-- no room for a seventh row above Edit All; the rows close up just enough to
+-- clear it. Each core row keeps its original y to be put back.
+local function layoutControlRows(rowY)
+    local ordered = Constants.OrderedLists.CONTROLS
+    for i = 2, #ordered do
+        local button = SetupScreen.Buttons["Control" .. ordered[i]]
+        button.rgmnOriginalY = button.rgmnOriginalY or button.box[2]
+        local y = rowY(i - 1, button)
+        button.box = { button.box[1], y, button.box[3], button.box[4] }
+        button.clickableArea = { button.clickableArea[1], y, button.clickableArea[3], button.clickableArea[4] }
+    end
+end
+
+local function registerRemainingShortcut()
+    Options.Defaults.CONTROLS[REMAINING_CONTROL] = REMAINING_DEFAULT
+    local saved = (Main.MetaSettings.controls or {})[REMAINING_CONTROL:gsub(" ", "_")]
+    Options.CONTROLS[REMAINING_CONTROL] = saved or Options.CONTROLS[REMAINING_CONTROL] or REMAINING_DEFAULT
+    local ordered = Constants.OrderedLists.CONTROLS
+    local listed = false
+    for _, key in ipairs(ordered) do
+        if key == REMAINING_CONTROL then listed = true end
+    end
+    if not listed then
+        table.insert(ordered, REMAINING_CONTROL)
+    end
+    -- A copy of the core's last single-button row, then all rows respaced.
+    local prev = SetupScreen.Buttons["ControlPrevious page"]
+    local row = {}
+    for k, v in pairs(prev) do
+        row[k] = v
+    end
+    row.rgmnOriginalY = nil
+    row.optionKey = REMAINING_CONTROL
+    row.getCustomText = function() return REMAINING_CONTROL .. ":" end
+    SetupScreen.Buttons["Control" .. REMAINING_CONTROL] = row
+
+    local first = SetupScreen.Buttons["Control" .. ordered[2]]
+    local firstY = first.rgmnOriginalY or first.box[2]
+    local lastY = SetupScreen.Buttons.ControlsEditAll.box[2] - Constants.Font.SIZE
+    local step = math.min(Constants.SCREEN.LINESPACING + 1, math.floor((lastY - firstY) / (#ordered - 2)))
+    layoutControlRows(function(index) return firstY + (index - 1) * step end)
+end
+
+local function unregisterRemainingShortcut()
+    SetupScreen.Buttons["Control" .. REMAINING_CONTROL] = nil
+    local ordered = Constants.OrderedLists.CONTROLS
+    for i = #ordered, 1, -1 do
+        if ordered[i] == REMAINING_CONTROL then table.remove(ordered, i) end
+    end
+    layoutControlRows(function(_, button) return button.rgmnOriginalY end)
+    Options.CONTROLS[REMAINING_CONTROL] = nil
+    Options.Defaults.CONTROLS[REMAINING_CONTROL] = nil
+end
+
+-- The binding opens the Remaining panel from the main tracker screen and
+-- closes it again, only out of battle: in battle and on paged screens the
+-- default L keeps its core jobs (Cycle through stats, Previous page).
+function self.checkRemainingShortcut()
+    local button = Options.CONTROLS[REMAINING_CONTROL]
+    if not Input.allowJoypad or button == nil or button == Input.NO_KEY_MAPPING then
+        remainingShortcutHeld = false
+        return
+    end
+    local joypad = Input.getJoypadInputFormatted()
+    if joypad[button] == true then
+        if not remainingShortcutHeld then
+            remainingShortcutHeld = true
+            remainingShortcutChorded = false
+        end
+        for key, down in pairs(joypad) do
+            if down == true and key ~= button then
+                remainingShortcutChorded = true
+                break
+            end
+        end
+        return
+    end
+    if not remainingShortcutHeld then
+        return
+    end
+    remainingShortcutHeld = false
+    if remainingShortcutChorded or SetupScreen.inProcessOfBinding() or Battle.inActiveBattle() then
+        return
+    end
+    local panel = Roguemon.Screens.SegmentProgressScreen
+    if Program.currentScreen == TrackerScreen then
+        Roguemon.ScreenManager.currentScreen = panel
+        Program.changeScreenView(panel)
+    elseif Program.currentScreen == panel then
+        panel.Buttons.Back:onClick()
+    end
+end
+
 function self.register()
+    registerRemainingShortcut()
     -- Clean up stale extension carousel items from previous loads.
     -- On module reload, SEGMENT/CURSE_CAROUSEL_INDEX reset to nil so unregister()
     -- can't find the old entries. Remove anything beyond the 8 core carousel types.
@@ -756,7 +869,7 @@ function self.register()
         getIconColors = function()
             if isCurseActive() then
                 -- Purple/magenta when curse is active
-                return { 0xFFDD00FF, nil }
+                return { self.curseActiveColor, nil }
             else
                 return { Theme.COLORS["Default text"], nil }
             end
@@ -786,7 +899,7 @@ function self.register()
             onClick = TrackerScreen.Buttons.CurseMenuButton.onClick,
             getIconColors = function()
                 if isCurseActive() then
-                    return { 0xFFDD00FF, nil }
+                    return { self.curseActiveColor, nil }
                 else
                     return { Theme.COLORS["Default text"], nil }
                 end
@@ -919,6 +1032,7 @@ function self.register()
 end
 
 function self.unregister()
+    unregisterRemainingShortcut()
     self.restoreCoreCarousels()
     self.restoreTrainerCarousel()
     if self.SEGMENT_CAROUSEL_INDEX then

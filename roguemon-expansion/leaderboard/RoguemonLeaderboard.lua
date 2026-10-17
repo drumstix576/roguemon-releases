@@ -14,7 +14,6 @@ self.ROMInfo = {
   uid = nil,
   ascension = nil,
   typeIndex = nil,
-  isClassic = nil,
   seed = nil,
 }
 
