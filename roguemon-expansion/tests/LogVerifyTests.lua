@@ -251,7 +251,9 @@ local function testBaseStatsComplete()
     local formSkips = 0
 
     for natId, raw in pairs(rawBST) do
-        local internalId = resolveInternalId(raw.name)
+        -- The log's number is the ROM species id; forms that share a display
+        -- name (Keldeo, the second Megas) would map to the wrong one by name.
+        local internalId = PokemonData.Pokemon[natId] and natId or nil
         local parsed = internalId and RandomizerLog.Data.Pokemon[internalId]
 
         if not parsed then
@@ -271,6 +273,13 @@ local function testBaseStatsComplete()
             if parsed.Name then
                 local parsedNorm = RandomizerLog.formatInput(parsed.Name)
                 local rawNorm = RandomizerLog.formatInput(raw.name)
+                -- The randomizer writes name + form suffix only when it fits in the
+                -- ROM's name field (pokemonNameLength counts the terminator), else
+                -- the bare name (Darmanitan-Gz -> Darmanitan). Count characters, not
+                -- bytes: Farfetch'd's apostrophe is multi-byte in the log.
+                if utf8.len(raw.name) >= GameSettings.pokemonNameLength then
+                    rawNorm = RandomizerLog.formatInput(raw.name:match("^(.+)%-[^%-]+$"))
+                end
                 if parsedNorm ~= rawNorm then
                     addReport("  MISMATCH: %s Name: log='%s' data='%s'", prefix, raw.name, parsed.Name)
                     mismatches = mismatches + 1

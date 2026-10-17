@@ -170,10 +170,13 @@ function UpdateChecker._checkStable(ext, github, currentVersion)
 end
 
 function UpdateChecker._checkAlpha(ext, github, currentVersion)
-    local apiUrl = string.format("https://api.github.com/repos/%s/releases?per_page=10", github)
+    -- Both games' alphas share the repo's release list; look past the other game's.
+    local apiUrl = string.format("https://api.github.com/repos/%s/releases?per_page=30", github)
 
+    -- FRLG and Emerald alphas share this repo: each game's prereleases carry its own
+    -- tag prefix and install from its own branch (ext.releaseTagPrefix, ext.alphaBranch).
     ext.downloadAndInstallUpdate = function()
-        return TrackerAPI.updateExtension("RoguemonExpansion", {}, {}, "alpha")
+        return TrackerAPI.updateExtension("RoguemonExpansion", {}, {}, ext.alphaBranch)
     end
 
     if Main.emulator == Main.EMU.BIZHAWK28 and Main.OS ~= "Windows" then
@@ -191,11 +194,13 @@ function UpdateChecker._checkAlpha(ext, github, currentVersion)
 
     local response = table.concat(responseLines, "\n")
 
-    -- Find the newest alpha prerelease tag.
-    local remoteTag = nil
-    for tag, prerelease in response:gmatch('"tag_name":%s*"(v?[^"]+)".-"prerelease":%s*(%a+)') do
-        if prerelease == "true" and tag:find("-alpha%.") then
-            remoteTag = tag
+    -- Find the newest alpha prerelease tag of this game: its prefix, then vX.Y.Z-alpha.N.
+    local remoteTag, remoteVersion = nil, nil
+    local prefix = ext.releaseTagPrefix
+    for tag, prerelease in response:gmatch('"tag_name":%s*"([^"]+)".-"prerelease":%s*(%a+)') do
+        local version = tag:sub(1, #prefix) == prefix and tag:sub(#prefix + 1) or nil
+        if prerelease == "true" and version and version:match("^v%d+%.%d+%.%d+%-alpha%.%d+$") then
+            remoteTag, remoteVersion = tag, version
             break
         end
     end
@@ -204,7 +209,7 @@ function UpdateChecker._checkAlpha(ext, github, currentVersion)
         return false, nil
     end
 
-    local isUpdateAvailable = remoteTag ~= currentVersion
+    local isUpdateAvailable = remoteVersion ~= currentVersion
     local releaseNotesUrl = string.format("https://github.com/%s/releases/tag/%s", github, remoteTag)
     return isUpdateAvailable, releaseNotesUrl
 end

@@ -42,23 +42,46 @@ self.CurseId = {
     LIVE_AUDIENCE = 23,
     MOODY = 24,
     CURSE_OF_DECAY = 25,
-    POLTERGEIST = 26,
-    DEBILITATION = 27,
-    TIME_WARP = 28,
-    TIKTOK = 29,
-    BLOODBORNE = 30,
-    FREEFALL = 31,
-    BACKSEATING = 32,
-    MALWARE = 33,
-    CONVERSION = 34,
-    PERFECTLY_BALANCED = 35,
-    SLOT_MACHINE = 36,
-    DAVID_VS_GOLIATH = 37,
-    DISTORTED_HEART = 38,
-    DISTORTED_SOUL = 39,
-    UNLEASH_THE_BEAST = 40,
-    COUNT = 41,
+    DEBILITATION = 26,
+    TIME_WARP = 27,
+    TIKTOK = 28,
+    BLOODBORNE = 29,
+    FREEFALL = 30,
+    BACKSEATING = 31,
+    MALWARE = 32,
+    CONVERSION = 33,
+    PERFECTLY_BALANCED = 34,
+    SLOT_MACHINE = 35,
+    DAVID_VS_GOLIATH = 36,
+    DISTORTED_HEART = 37,
+    DISTORTED_SOUL = 38,
+    UNLEASH_THE_BEAST = 39,
+    PARALLEL_UNIVERSE = 40,
+    SHARING_IS_CARING = 41,
+    DAZED_AND_CONFUSED = 42,
+    ILLUMINATION = 43,
+    COUNT = 44,
 }
+
+-- Curse cards (data/CurseCards.lua), keyed by CurseId. Separator rows are
+-- converted to the matrix Drawing.drawImageAsPixels takes.
+self.CurseCards = {}
+for name, card in pairs(dofile(Roguemon.extensionDir .. "data" .. FileManager.slash .. "CurseCards.lua")) do
+    local curseId = self.CurseId[name]
+    assert(curseId, "CurseCards.lua: unknown curse " .. name)
+    if card.separator then
+        local matrix = {}
+        for i, row in ipairs(card.separator.rows) do
+            matrix[i] = {}
+            for c = 1, #row do
+                local ch = row:sub(c, c)
+                matrix[i][c] = ch == "." and 0 or tonumber(ch)
+            end
+        end
+        card.separator.pixels = matrix
+    end
+    self.CurseCards[curseId] = card
+end
 
 -- Fallback curse names (used if ROM data unavailable)
 self.CurseNames = {
@@ -88,27 +111,29 @@ self.CurseNames = {
     [23] = "Live Audience",
     [24] = "Moody",
     [25] = "Curse of Decay",
-    [26] = "Poltergeist",
-    [27] = "Debilitation",
-    [28] = "Time Warp",
-    [29] = "TikTok",
-    [30] = "Bloodborne",
-    [31] = "Freefall",
-    [32] = "Backseating",
-    [33] = "Malware",
-    [34] = "Conversion",
-    [35] = "Perfectly Balanced",
-    [36] = "Slot Machine",
-    [37] = "David vs Goliath",
-    [38] = "Distorted Heart",
-    [39] = "Distorted Soul",
-    [40] = "Unleash the Beast",
+    [26] = "Debilitation",
+    [27] = "Time Warp",
+    [28] = "TikTok",
+    [29] = "Bloodborne",
+    [30] = "Freefall",
+    [31] = "Backseating",
+    [32] = "Malware",
+    [33] = "Conversion",
+    [34] = "Perfectly Balanced",
+    [35] = "Slot Machine",
+    [36] = "David vs Goliath",
+    [37] = "Distorted Heart",
+    [38] = "Distorted Soul",
+    [39] = "Unleash the Beast",
+    [40] = "Parallel Universe",
+    [41] = "Sharing is Caring",
+    [42] = "Dazed and Confused",
+    [43] = "Illumination",
 }
 
 -- State flag masks (matches ROM constants)
 local STATE_FLAG_FORGETFULNESS_APPLIED = 0x80000000
 local STATE_FLAG_DOWNSIZING_APPLIED = 0x40000000
-local STATE_FLAG_POLTERGEIST_PENALTY = 0x20000000
 local STATE_FLAG_SWAP_USED = 0x10000000
 
 local WARDED_UNUSED = 0xFF
@@ -549,14 +574,6 @@ function self.isDownsizingApplied(state)
     return Utils.bit_and(st.stateFlags or 0, STATE_FLAG_DOWNSIZING_APPLIED) ~= 0
 end
 
-function self.isPoltergeistPenaltyActive(state)
-    local st = state or self.State or self.readCurseState()
-    if not st then
-        return false
-    end
-    return Utils.bit_and(st.stateFlags or 0, STATE_FLAG_POLTERGEIST_PENALTY) ~= 0
-end
-
 function self.logStateChange(newState, prevState)
     if not self.logEnabled then
         return
@@ -663,6 +680,23 @@ end
 -- Legacy alias for compatibility
 function self.pollSaveBlock3Ptr()
     -- No-op: SaveBlock3 monitoring is now handled by UpdateManager
+end
+
+-- A color from the purple curse theme, by Theme.COLORS key, whatever theme
+-- is currently applied.
+function self.getCurseThemeColor(colorKey)
+    local colorCodes = {}
+    for code in CURSE_THEME:gmatch("[^%s]+") do
+        if code:len() == 6 then
+            colorCodes[#colorCodes + 1] = code
+        end
+    end
+    for i, key in ipairs(Constants.OrderedLists.THEMECOLORS) do
+        if key == colorKey then
+            return 0xFF000000 + tonumber(colorCodes[i], 16)
+        end
+    end
+    error("getCurseThemeColor: unknown color key " .. tostring(colorKey))
 end
 
 function self.applyCurseTheme()
@@ -946,10 +980,9 @@ function self.debugCurseState()
         Utils.printDebug("assignments: %s", table.concat(assignments, " "))
     end
 
-    Utils.printDebug("forgetfulnessApplied=%s downsizingApplied=%s poltergeistPenalty=%s",
+    Utils.printDebug("forgetfulnessApplied=%s downsizingApplied=%s",
         tostring(self.isForgetfulnessApplied(state)),
-        tostring(self.isDownsizingApplied(state)),
-        tostring(self.isPoltergeistPenaltyActive(state)))
+        tostring(self.isDownsizingApplied(state)))
 end
 
 return self

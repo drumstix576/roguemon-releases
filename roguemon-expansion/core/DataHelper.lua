@@ -292,6 +292,17 @@ function self.buildTrackerScreenDisplay(...)
         end
     end
 
+    -- Parallel Universe inverts every matchup, and the ROM hides its own
+    -- effectiveness indicators while it is active, so the tracker does too.
+    local CurseManager = Roguemon.CurseManager
+    if CurseManager and CurseManager.getActiveCurseId() == CurseManager.CurseId.PARALLEL_UNIVERSE
+        and data.m and data.m.moves then
+        for _, move in ipairs(data.m.moves) do
+            move.showeffective = false
+            move.effectiveness = 1
+        end
+    end
+
     -- Substitute abbreviated Pokemon names for TrackerScreen display
     if data.p and data.p.name and pokemonAbbreviations[data.p.name] then
         data.p.name = pokemonAbbreviations[data.p.name]

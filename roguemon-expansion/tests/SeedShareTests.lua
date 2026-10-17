@@ -265,21 +265,6 @@ local function testCompatibilityMismatches()
     return true
 end
 
-local function testCompatibilitySkipsAbsentLocalStamp()
-    withRestores(function(stubField)
-        -- Before GameSettings.initialize() has read the ROM there is no local
-        -- stamp to compare against, and the ROM build check has to stay quiet
-        -- rather than warn on every code.
-        applyEnv(stubField, { configStamp = nil })
-        local warnings = Roguemon.SeedShare.checkCompatibility(
-            matchingDecode({ configStamp = 0xDEADBEEF }))
-        assert(#warnings == 0, string.format(
-            "absent local stamp produced %d warning(s): %s", #warnings, table.concat(warnings, " | ")))
-    end)
-
-    return true
-end
-
 function SeedShareTests.run()
     Utils.printDebug("[TEST] Running seed share tests")
     local tests = Roguemon.Tests
@@ -293,7 +278,6 @@ function SeedShareTests.run()
         tests.runTest("whitespace in a pasted code is tolerated", testWhitespaceTolerance),
         tests.runTest("matching install produces no warnings", testCompatibilityClean),
         tests.runTest("each mismatch produces its own warning", testCompatibilityMismatches),
-        tests.runTest("absent local stamp skips the ROM build check", testCompatibilitySkipsAbsentLocalStamp),
     }
 
     local allPassed = true

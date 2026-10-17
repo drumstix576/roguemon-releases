@@ -585,56 +585,65 @@ local function testSelectPrizeAddsItems()
 end
 
 local function testRejectOwnedPrize()
-    -- Utils.printDebug("[TEST] Testing prize rejection for owned key item")
-    assert(resetPrizeState(), "Unable to reset prize state before test")
-    local pm = Roguemon.PrizeManager
-    assert(pm ~= nil, "PrizeManager missing")
-    pm.buildData(true)
+    -- Starts after select prize adds items has drained: its offer rewrites the
+    -- shared prize state, so running both in one frame lets the ROM apply the
+    -- Potion pick to this Armor Plating offer and pop the queue.
+    local scheduled = deferAfterFrames(90, function()
+        -- Utils.printDebug("[TEST] Testing prize rejection for owned key item")
+        assert(resetPrizeState(), "Unable to reset prize state before test")
+        local pm = Roguemon.PrizeManager
+        assert(pm ~= nil, "PrizeManager missing")
+        pm.buildData(true)
 
-    local def = pm.PrizeDefsByName and pm.PrizeDefsByName["Armor Plating"] or nil
-    assert(def and def.id, "Missing Armor Plating prize definition")
+        local def = pm.PrizeDefsByName and pm.PrizeDefsByName["Armor Plating"] or nil
+        assert(def and def.id, "Missing Armor Plating prize definition")
 
-    local itemId = findItemIdByName("Armor Plating")
-    assert(itemId ~= nil, "Missing item id for Armor Plating")
+        local itemId = findItemIdByName("Armor Plating")
+        assert(itemId ~= nil, "Missing item id for Armor Plating")
 
-    local pocketId = Roguemon.ItemManager.Pocket.Roguemon
-    local savedEntries = captureItemSlots(pocketId, itemId)
-    assert(savedEntries ~= nil, "Unable to capture RogueMon pocket slots")
-    assert(setPocketItemQuantity(pocketId, itemId, 1), "Unable to set Armor Plating in pocket")
+        local pocketId = Roguemon.ItemManager.Pocket.Roguemon
+        local savedEntries = captureItemSlots(pocketId, itemId)
+        assert(savedEntries ~= nil, "Unable to capture RogueMon pocket slots")
+        assert(setPocketItemQuantity(pocketId, itemId, 1), "Unable to set Armor Plating in pocket")
 
-    local ok = pm.offerPrizeOptions(def.id)
-    assert(ok, "offerPrizeOptions failed")
-    pm.submitPrizeSelection(def.id)
+        local ok = pm.offerPrizeOptions(def.id)
+        assert(ok, "offerPrizeOptions failed")
+        pm.submitPrizeSelection(def.id)
 
-    local scheduled = deferAfterFrames(30, function()
-        local state = pm.readPrizeState()
-        if state and Utils.bit_and(state.flags or 0, PRIZE_FLAG_PENDING_RESULT) ~= 0 then
-            Utils.printDebug("[WARN] Test reject owned prize skipped (deferred): prize pending not processed yet")
-            restoreItemSlots(pocketId, itemId, savedEntries or {})
-            return
-        end
-        if not state or (state.currentPrizeIds and state.currentPrizeIds[1] ~= def.id) then
-            Utils.printDebug("[WARN] Test reject owned prize skipped (deferred): prize state was reset")
-            restoreItemSlots(pocketId, itemId, savedEntries or {})
-            return
-        end
-        if not (state and state.queueCount == 1) then
-            Utils.printDebug("[WARN] Test reject owned prize failed (deferred): expected queueCount 1, got %s", tostring(state and state.queueCount))
-        else
-            local headIdx = (state.queueHead or 0) + 1
-            if state.queueTasks[headIdx] ~= 0 then
-                Utils.printDebug("[WARN] Test reject owned prize failed (deferred): expected SELECT task at head")
+        local scheduled = deferAfterFrames(30, function()
+            local state = pm.readPrizeState()
+            if state and Utils.bit_and(state.flags or 0, PRIZE_FLAG_PENDING_RESULT) ~= 0 then
+                Utils.printDebug("[WARN] Test reject owned prize skipped (deferred): prize pending not processed yet")
+                restoreItemSlots(pocketId, itemId, savedEntries or {})
+                return
             end
-            if Utils.bit_and(state.flags or 0, 0x04) == 0 then
-                Utils.printDebug("[WARN] Test reject owned prize failed (deferred): rejected flag not set")
+            if not state or (state.currentPrizeIds and state.currentPrizeIds[1] ~= def.id) then
+                Utils.printDebug("[WARN] Test reject owned prize skipped (deferred): prize state was reset")
+                restoreItemSlots(pocketId, itemId, savedEntries or {})
+                return
             end
-        end
-        restoreItemSlots(pocketId, itemId, savedEntries or {})
-        if Roguemon.PrizeManager and Roguemon.PrizeManager.clearPrizeQueue then
-            Roguemon.PrizeManager.clearPrizeQueue("test cleanup")
-        end
+            if not (state and state.queueCount == 1) then
+                Utils.printDebug("[WARN] Test reject owned prize failed (deferred): expected queueCount 1, got %s", tostring(state and state.queueCount))
+                pm.debugPrizeState()
+            else
+                local headIdx = (state.queueHead or 0) + 1
+                if state.queueTasks[headIdx] ~= 0 then
+                    Utils.printDebug("[WARN] Test reject owned prize failed (deferred): expected SELECT task at head")
+                    pm.debugPrizeState()
+                end
+                if Utils.bit_and(state.flags or 0, 0x04) == 0 then
+                    Utils.printDebug("[WARN] Test reject owned prize failed (deferred): rejected flag not set")
+                    pm.debugPrizeState()
+                end
+            end
+            restoreItemSlots(pocketId, itemId, savedEntries or {})
+            if Roguemon.PrizeManager and Roguemon.PrizeManager.clearPrizeQueue then
+                Roguemon.PrizeManager.clearPrizeQueue("test cleanup")
+            end
+        end)
+        assert(scheduled, "Unable to schedule deferred ROM processing check")
     end)
-    assert(scheduled, "Unable to schedule deferred ROM processing check")
+    assert(scheduled, "Unable to schedule reject owned prize")
 
     return true
 end

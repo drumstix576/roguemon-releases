@@ -5,18 +5,16 @@ local FIRERED_11_SIZE = 16777216
 
 --- Apply a BPS patch against the stored vanilla.gba file.
 --- Shared core used by both initial patching (after emulator dump) and re-patching.
----@param profile string|nil "classic" or nil for split
 ---@return boolean success
-local function applyBpsPatch(profile)
+local function applyBpsPatch()
     local ext = _G.Roguemon
     if not ext then return false end
 
-    local isClassic = (profile == "classic")
     local patcherJar = ext.Paths.PATCHER_JAR
-    local bpsPatch = isClassic and ext.Paths.ROM_BPS_CLASSIC or ext.Paths.ROM_BPS
+    local bpsPatch = ext.Paths.ROM_BPS
     local vanillaPath = ext.Paths.VANILLA_ROM
-    local unrandPath = isClassic and ext.Paths.ROGUEMON_CLASSIC_UNRAND_ROM or ext.Paths.ROGUEMON_UNRAND_ROM
-    local romPath = isClassic and ext.Paths.ROGUEMON_CLASSIC_ROM or ext.Paths.ROGUEMON_ROM
+    local unrandPath = ext.Paths.ROGUEMON_UNRAND_ROM
+    local romPath = ext.Paths.ROGUEMON_ROM
 
     if not FileManager.fileExists(patcherJar) then
         print("[Patcher] Cannot patch: jbps.jar not found at " .. tostring(patcherJar))
@@ -63,23 +61,20 @@ local function compileLeaderboardUploader()
     end
 end
 
---- Get the .SaveRAM file path for a given profile.
----@param profile string "split" or "classic"
+--- Get the .SaveRAM file path.
 ---@return string|nil path to the .SaveRAM file
-function self.getSaveRAMPath(profile)
+function self.getSaveRAMPath()
     local ext = _G.Roguemon
     if not ext or not ext.Paths then return nil end
-    local isClassic = (profile == "classic")
-    local romPath = isClassic and ext.Paths.ROGUEMON_CLASSIC_ROM or ext.Paths.ROGUEMON_ROM
+    local romPath = ext.Paths.ROGUEMON_ROM
     return romPath and (romPath .. ".SaveRAM") or nil
 end
 
 --- Check for existing save data and offer to migrate stats before patching.
 --- Returns true if migration was accepted and cached, false if declined, nil if no save found.
----@param profile string "split" or "classic"
 ---@return boolean|nil
-function self.offerStatsMigration(profile)
-    local saveRAMPath = self.getSaveRAMPath(profile)
+function self.offerStatsMigration()
+    local saveRAMPath = self.getSaveRAMPath()
     if not saveRAMPath or not FileManager.fileExists(saveRAMPath) then
         return nil
     end
@@ -131,7 +126,7 @@ function self.offerStatsMigration(profile)
     end
 
     if accepted then
-        local cachePath = SaveMigrator.getCachePath(profile)
+        local cachePath = SaveMigrator.getCachePath()
         SaveMigrator.saveToDisk(stats, cachePath)
         return true
     end
@@ -169,7 +164,7 @@ function self.offerStatsMigration(profile)
     end
 
     -- User cancelled the decline → treat as accepting
-    local cachePath = SaveMigrator.getCachePath(profile)
+    local cachePath = SaveMigrator.getCachePath()
     SaveMigrator.saveToDisk(stats, cachePath)
     return true
 end
@@ -181,9 +176,8 @@ function self.isROMVanilla()
 end
 
 --- Dump vanilla ROM from emulator memory and apply BPS patch.
----@param profile string|nil "classic" or nil for split
 ---@return boolean success
-function self.patchVanillaROM(profile)
+function self.patchVanillaROM()
     local ext = _G.Roguemon
     if not ext then return false end
 
@@ -201,7 +195,7 @@ function self.patchVanillaROM(profile)
     out:close()
     data = nil -- allow GC of 16MB array
 
-    return applyBpsPatch(profile)
+    return applyBpsPatch()
 end
 
 --- Check if the loaded ROM is vanilla FireRed 1.1; if so, prompt to patch.
@@ -214,11 +208,10 @@ function self.tryPatchVanillaROM()
     local ext = _G.Roguemon
     local result = nil
     local complete = false
-    local hasClassicBps = FileManager.fileExists(ext.Paths.ROM_BPS_CLASSIC)
 
-    local function onPatchComplete(profile)
+    local function onPatchComplete()
         compileLeaderboardUploader()
-        local romPath = (profile == "classic") and ext.Paths.ROGUEMON_CLASSIC_ROM or ext.Paths.ROGUEMON_ROM
+        local romPath = ext.Paths.ROGUEMON_ROM
         -- Persist sound state before full restart (Main.Run wipes Utils.wasSoundOn)
         if ext.RunManager and ext.RunManager.saveSoundState then
             ext.RunManager.saveSoundState()
@@ -228,105 +221,43 @@ function self.tryPatchVanillaROM()
         complete = true
     end
 
-    local function onPatchDecision(profile)
-        if profile then
-            if hasClassicBps then
-                -- Offer save migration for both profiles before patching
-                self.offerStatsMigration("split")
-                self.offerStatsMigration("classic")
-
-                -- Patch both ROMs
-                local splitOk = self.patchVanillaROM("split")
-                local clsOk = self.patchVanillaROM("classic")
-                result = splitOk and clsOk
-
-                if splitOk or clsOk then
-                    -- If selected profile's patch failed, fall back to the other
-                    if not splitOk and profile == "split" then profile = "classic" end
-                    if not clsOk and profile == "classic" then profile = "split" end
-
-                    local profileLabel = (profile == "classic") and "Classic" or "Split"
-                    local form = ExternalUI.BizForms.createForm(
-                        "RogueMon Patch Complete", 470, 130, 100, 20, function() onPatchComplete(profile) end)
-                    form:createLabel("Vanilla FireRed ROM successfully patched!", 15, 10)
-                    form:createLabel("Simply open 'roguemon_split.gba' or 'roguemon_classic.gba' from now on.", 15, 32)
-                    form:createLabel("Click 'Launch' to begin playing RogueMon " .. profileLabel .. ".", 15, 52)
-                    form.Controls.close = form:createButton("Launch", 188, 90, function()
-                        form:destroy()
-                    end, 95, 25)
-                    return
-                end
-            else
-                -- Only Split available
-                self.offerStatsMigration(profile)
-                result = self.patchVanillaROM(profile)
-                if result then
-                    local form = ExternalUI.BizForms.createForm(
-                        "RogueMon Patch Complete", 470, 130, 100, 20, function() onPatchComplete(profile) end)
-                    form:createLabel("Vanilla FireRed ROM successfully patched!", 15, 10)
-                    form:createLabel("Simply open 'roguemon_split.gba' from now on.", 15, 32)
-                    form:createLabel("Click 'Launch' to begin playing RogueMon.", 15, 52)
-                    form.Controls.close = form:createButton("Launch", 188, 90, function()
-                        form:destroy()
-                    end, 95, 25)
-                    return
-                end
+    local function onPatchDecision(accepted)
+        if accepted then
+            self.offerStatsMigration()
+            result = self.patchVanillaROM()
+            if result then
+                local form = ExternalUI.BizForms.createForm(
+                    "RogueMon Patch Complete", 470, 130, 100, 20, function() onPatchComplete() end)
+                form:createLabel("Vanilla FireRed ROM successfully patched!", 15, 10)
+                form:createLabel("Simply open 'roguemon_split.gba' from now on.", 15, 32)
+                form:createLabel("Click 'Launch' to begin playing RogueMon.", 15, 52)
+                form.Controls.close = form:createButton("Launch", 188, 90, function()
+                    form:destroy()
+                end, 95, 25)
+                return
             end
         end
         complete = true
     end
 
     -- Show patch prompt
-    local onDismiss = function() onPatchDecision(nil) end
-    if hasClassicBps then
-        -- Both profiles available — patch both, let user pick which to play first
-        local form = ExternalUI.BizForms.createForm(
-            "RogueMon Patch", 500, 175, 100, 20, onDismiss)
-        form:createLabel(
-            "This will create two RogueMon ROMs using this Vanilla FireRed ROM:", 15, 10)
-        form:createLabel(
-            "Split: modern moves, abilities, and items.", 15, 30)
-        form:createLabel(
-            "Classic: Gen 3 mechanics with Fairy type.", 15, 46)
-        form:createLabel(
-            "To switch between these two, talk to Professor Oak in the Ascension Tower.", 15, 68)
-        form:createLabel(
-            "Which would you like to play first?", 15, 86)
-        local note = form:createLabel(
-            "(To stop this prompt, disable the RogueMon tracker extension.)", 15, 108)
-        ExternalUI.BizForms.setProperty(
-            note, ExternalUI.BizForms.Properties.FORE_COLOR, "blue")
-        form.Controls.split = form:createButton("Split", 85, 136, function()
-            onPatchDecision("split")
-            form:destroy()
-        end, 95, 25)
-        form.Controls.classic = form:createButton("Classic", 210, 136, function()
-            onPatchDecision("classic")
-            form:destroy()
-        end, 95, 25)
-        form.Controls.dismiss = form:createButton("Dismiss", 335, 136, function()
-            onPatchDecision(nil)
-            form:destroy()
-        end, 75, 25)
-    else
-        -- Only Split BPS available
-        local form = ExternalUI.BizForms.createForm(
-            "RogueMon Patch", 480, 120, 100, 20, onDismiss)
-        form:createLabel(
-            "Would you like to create the RogueMon ROM using this Vanilla FireRed ROM?", 15, 10)
-        local note = form:createLabel(
-            "(To stop this prompt, disable the RogueMon tracker extension.)", 15, 32)
-        ExternalUI.BizForms.setProperty(
-            note, ExternalUI.BizForms.Properties.FORE_COLOR, "blue")
-        form.Controls.patchIt = form:createButton("Patch", 145, 66, function()
-            onPatchDecision("split")
-            form:destroy()
-        end, 75, 25)
-        form.Controls.dismiss = form:createButton("Dismiss", 260, 66, function()
-            onPatchDecision(nil)
-            form:destroy()
-        end, 75, 25)
-    end
+    local onDismiss = function() onPatchDecision(false) end
+    local form = ExternalUI.BizForms.createForm(
+        "RogueMon Patch", 480, 120, 100, 20, onDismiss)
+    form:createLabel(
+        "Would you like to create the RogueMon ROM using this Vanilla FireRed ROM?", 15, 10)
+    local note = form:createLabel(
+        "(To stop this prompt, disable the RogueMon tracker extension.)", 15, 32)
+    ExternalUI.BizForms.setProperty(
+        note, ExternalUI.BizForms.Properties.FORE_COLOR, "blue")
+    form.Controls.patchIt = form:createButton("Patch", 145, 66, function()
+        onPatchDecision(true)
+        form:destroy()
+    end, 75, 25)
+    form.Controls.dismiss = form:createButton("Dismiss", 260, 66, function()
+        onPatchDecision(false)
+        form:destroy()
+    end, 75, 25)
 
     while not complete do
         Main.frameAdvance()
@@ -371,7 +302,6 @@ function self.tryRepatchIfNeeded(gameSettings)
     end
 
     local hasVanilla = FileManager.fileExists(ext.Paths.VANILLA_ROM)
-    local hasClassicBps = FileManager.fileExists(ext.Paths.ROM_BPS_CLASSIC)
     local complete = false
     local handled = true
 
@@ -387,10 +317,9 @@ function self.tryRepatchIfNeeded(gameSettings)
         complete = true
     end
 
-    local function showCompletionAndLaunch(launchProfile)
+    local function showCompletionAndLaunch()
         compileLeaderboardUploader()
-        local romPath = (launchProfile == "classic")
-            and ext.Paths.ROGUEMON_CLASSIC_ROM or ext.Paths.ROGUEMON_ROM
+        local romPath = ext.Paths.ROGUEMON_ROM
         local doneForm = ExternalUI.BizForms.createForm(
             "RogueMon Update Complete", 360, 110, 100, 20, function()
                 -- Persist sound state before full restart (Main.Run wipes Utils.wasSoundOn)
@@ -420,35 +349,13 @@ function self.tryRepatchIfNeeded(gameSettings)
         form.Controls.patch = form:createButton("Apply Update", 110, 95, function()
             form:destroy()
 
-            if hasClassicBps then
-                self.offerStatsMigration("split")
-                self.offerStatsMigration("classic")
-                local splitOk = applyBpsPatch("split")
-                local clsOk = applyBpsPatch("classic")
-
-                if splitOk or clsOk then
-                    -- Launch whichever profile the user was running
-                    local isClassic = ext.isClassicProfile()
-                    local launchProfile
-                    if isClassic and clsOk then launchProfile = "classic"
-                    elseif splitOk then launchProfile = "split"
-                    else launchProfile = "classic"
-                    end
-                    showCompletionAndLaunch(launchProfile)
-                else
-                    print("[ERROR] Failed to re-patch ROM.")
-                    ext.configError = "ROM patch failed. Check Lua console for details."
-                    complete = true
-                end
+            self.offerStatsMigration()
+            if applyBpsPatch() then
+                showCompletionAndLaunch()
             else
-                self.offerStatsMigration("split")
-                if applyBpsPatch("split") then
-                    showCompletionAndLaunch("split")
-                else
-                    print("[ERROR] Failed to re-patch ROM.")
-                    ext.configError = "ROM patch failed. Check Lua console for details."
-                    complete = true
-                end
+                print("[ERROR] Failed to re-patch ROM.")
+                ext.configError = "ROM patch failed. Check Lua console for details."
+                complete = true
             end
         end, 120, 25)
 

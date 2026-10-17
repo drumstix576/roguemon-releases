@@ -29,6 +29,7 @@ local TEST_MODULES = {
     "LogVerify",
     "ShopScreen",
     "DataHelper",
+    "Pickle",
     "Leaderboard",
 }
 
