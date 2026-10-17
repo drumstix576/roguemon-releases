@@ -22,6 +22,31 @@ local function withRestores(fn)
     if not ok then error(err) end
 end
 
+-- register() adds an Open Remaining row to the Controls tab, so a test that calls
+-- it needs the controls list and the Control rows SetupScreen.initialize builds.
+-- Adds them to the Constants and Options stubs already in place and stubs
+-- SetupScreen, so register() never lays out the live tracker's rows.
+local function controlsTabRows()
+    local ordered = { "Load next seed", "Toggle view", "Cycle through stats", "Mark stat", "Next page", "Previous page" }
+    local buttons = { ControlsEditAll = { box = { 10, 130, 40, 11 } } }
+    for i = 2, #ordered do
+        local y = 30 + i * 11
+        buttons["Control" .. ordered[i]] = { box = { 10, y, 100, 11 }, clickableArea = { 10, y, 100, 11 } }
+    end
+    return ordered, buttons
+end
+
+local function stubControlsTab(stubGlobal)
+    local ordered, buttons = controlsTabRows()
+    Constants.OrderedLists = { CONTROLS = ordered }
+    Constants.Font = { SIZE = 9 }
+    Constants.SCREEN.LINESPACING = 10
+    Options.CONTROLS = {}
+    Options.Defaults = { CONTROLS = {} }
+    Main.MetaSettings = {}
+    stubGlobal("SetupScreen", { Buttons = buttons })
+end
+
 local function testCapTextAndColorUnderCap()
     -- Utils.printDebug("[TEST] Testing cap text/under-cap color")
     withRestores(function(stubGlobal, stubField)
@@ -537,6 +562,67 @@ local function testRemainingShortcutIgnoresRThenL()
     return true
 end
 
+-- Builds the core tables register() touches, standalone.
+local function stubCoreForRegister(stubGlobal)
+    local function trackerScreen()
+        return { Buttons = { TrainerSummary = {} }, CarouselTypes = {}, CarouselItems = {} }
+    end
+    stubGlobal("Constants", {
+        SCREEN = { WIDTH = 240, RIGHT_GAP = 150, MARGIN = 5 },
+        ButtonTypes = { NO_BORDER = 1, FULL_BORDER = 2, PIXELIMAGE = 3 },
+    })
+    stubGlobal("Options", {})
+    stubGlobal("Main", { IsOnBizhawk = function() return true end })
+    stubControlsTab(stubGlobal)
+    stubGlobal("TrackerScreen", trackerScreen())
+    stubGlobal("BattleDetailsScreen", nil)
+    stubGlobal("Drawing", { Colors = { GREEN = 0 } })
+    return trackerScreen
+end
+
+local function testUnregisterRemovesRemainingRow()
+    withRestores(function(stubGlobal)
+        stubCoreForRegister(stubGlobal)
+        local editY = SetupScreen.Buttons["ControlToggle view"].box[2]
+
+        local segUI = dofile(Roguemon.extensionDir .. "SegmentUI.lua")
+        segUI.register()
+        segUI.unregister()
+
+        assert(SetupScreen.Buttons["ControlOpen Remaining"] == nil, "unregister should remove the Open Remaining row")
+        assert(#Constants.OrderedLists.CONTROLS == 6, "unregister should take Open Remaining off the controls list")
+        assert(Options.CONTROLS["Open Remaining"] == nil, "unregister should drop the Open Remaining binding")
+        assert(SetupScreen.Buttons["ControlToggle view"].box[2] == editY, "unregister should put the core rows back")
+    end)
+    return true
+end
+
+-- A tracker restart re-runs the core files before the new extension tears the old
+-- one down, so the old instance's unregister meets a fresh SetupScreen with no
+-- Control rows yet (SetupScreen.initialize builds them after the extension loads).
+-- It used to lay those missing rows out and fail, leaving the game unsupported.
+local function testUnregisterAfterCoreReload()
+    withRestores(function(stubGlobal)
+        local trackerScreen = stubCoreForRegister(stubGlobal)
+
+        local segUI = dofile(Roguemon.extensionDir .. "SegmentUI.lua")
+        segUI.register()
+        assert(SetupScreen.Buttons["ControlOpen Remaining"] ~= nil, "register should add the Open Remaining row")
+
+        -- What startTracker leaves: every core table rebuilt, no Control rows yet.
+        local freshOrdered = controlsTabRows()
+        Constants.OrderedLists = { CONTROLS = freshOrdered }
+        stubGlobal("SetupScreen", { Buttons = {} })
+        stubGlobal("Options", { CONTROLS = {}, Defaults = { CONTROLS = {} } })
+        stubGlobal("TrackerScreen", trackerScreen())
+
+        segUI.unregister()
+        assert(#freshOrdered == 6, "the fresh controls list should be left alone")
+        assert(next(SetupScreen.Buttons) == nil, "the fresh SetupScreen should be left alone")
+    end)
+    return true
+end
+
 function SegmentUITests.run()
     Utils.printDebug("[TEST] Running SegmentUI tests")
     local tests = Roguemon.Tests
@@ -555,6 +641,8 @@ function SegmentUITests.run()
         tests.runTest("Open Remaining opens on a lone tap", testRemainingShortcutTapOpens),
         tests.runTest("Open Remaining ignores L then R", testRemainingShortcutIgnoresLThenR),
         tests.runTest("Open Remaining ignores R then L", testRemainingShortcutIgnoresRThenL),
+        tests.runTest("unregister removes the Open Remaining row", testUnregisterRemovesRemainingRow),
+        tests.runTest("unregister after a core reload leaves the fresh core alone", testUnregisterAfterCoreReload),
     }
 
     local allPassed = true

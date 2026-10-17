@@ -679,6 +679,10 @@ local REMAINING_DEFAULT = "L"
 -- down while it was held (e.g. L+R, which closes pop-ups), it does nothing.
 local remainingShortcutHeld = false
 local remainingShortcutChorded = false
+-- The SetupScreen.Buttons table the shortcut's row and layout went into. A
+-- tracker restart re-runs the core files, which replaces it with one that has
+-- no Control rows until SetupScreen.initialize, after the extension loads.
+local remainingShortcutButtons = nil
 
 -- Sets the Controls tab's single-button rows (the core's and ours) to rowY(i).
 -- A row's text spans y - 2 .. y - 2 + Font.SIZE, so the core's spacing leaves
@@ -723,9 +727,17 @@ local function registerRemainingShortcut()
     local lastY = SetupScreen.Buttons.ControlsEditAll.box[2] - Constants.Font.SIZE
     local step = math.min(Constants.SCREEN.LINESPACING + 1, math.floor((lastY - firstY) / (#ordered - 2)))
     layoutControlRows(function(index) return firstY + (index - 1) * step end)
+    remainingShortcutButtons = SetupScreen.Buttons
 end
 
 local function unregisterRemainingShortcut()
+    -- After a core reload the row, the layout and the CONTROLS entries went
+    -- with the core tables they were made in, so there is nothing to undo.
+    if SetupScreen.Buttons ~= remainingShortcutButtons then
+        remainingShortcutButtons = nil
+        return
+    end
+    remainingShortcutButtons = nil
     SetupScreen.Buttons["Control" .. REMAINING_CONTROL] = nil
     local ordered = Constants.OrderedLists.CONTROLS
     for i = #ordered, 1, -1 do

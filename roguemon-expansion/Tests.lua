@@ -17,6 +17,7 @@ local TEST_MODULES = {
     "WatchManager",
     "OverrideManager",
     "SegmentManager",
+    "SegmentUI",
     "ReminderManager",
     "ItemManager",
     "PrizeManager",
