@@ -72,12 +72,10 @@ function self.drawScreen()
     Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, 10, "Potion Investment", Theme.COLORS["Default text"], canvas.shadow)
 
     local state = getState()
-    local value = state and state.potionInvestmentValue or 0
     local offerName = getOfferName(state)
 
-    Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, 26, string.format("Value: %d", value), Theme.COLORS["Default text"], canvas.shadow)
     if offerName ~= "" then
-        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, 38, string.format("Offer: %s", offerName), Theme.COLORS["Default text"], canvas.shadow)
+        Drawing.drawText(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 6, 26, string.format("Offer: %s", offerName), Theme.COLORS["Default text"], canvas.shadow)
     end
 
     local x = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + TOP_LEFT_X
@@ -119,6 +117,15 @@ self.Buttons = {
         type = Constants.ButtonTypes.FULL_BORDER,
         getText = function() return "Wait" end,
         box = { 0, 0, BUTTON_WIDTH, BUTTON_HEIGHT },
+        -- Victory Road is the last opportunity to redeem; declining would
+        -- strand the investment forever. Mirrors RoguestoneScreen's hide-on-
+        -- free pattern. ROM enforces the same gate by force-granting at VR
+        -- even if a decline byte arrives, so this is purely UX clarity.
+        isVisible = function()
+            local state = getState()
+            local lastSeg = state and state.potionInvestmentLastSegmentId
+            return lastSeg ~= GameSettings.segmentVictoryRoadId
+        end,
         onClick = function()
             self.submitDecision(false)
         end,

@@ -44,6 +44,16 @@ local function isParentOff(def)
     return def.parent and Roguemon.OptionsManager.getValue(def.parent) == false
 end
 
+-- An entry is locked when its parent is off, or when its `disabledBy` predicate
+-- reports a blocker. Locked entries render greyed and ignore clicks. Returns
+-- the blocker reason (a string) or nil; callers only test truthiness, but the
+-- reason is what the label suffix shows.
+local function lockedReason(def)
+    if isParentOff(def) then return "" end
+    if def.disabledBy then return def.disabledBy() end
+    return nil
+end
+
 local function buildCheckboxButtons()
     local buttons = {}
     local canvasX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
@@ -63,22 +73,39 @@ local function buildCheckboxButtons()
         local btnKey = "Option" .. i
         buttons[btnKey] = {
             type = Constants.ButtonTypes.CHECKBOX,
-            getText = function() return " " .. (def.label or def.key) end,
+            getText = function(btn)
+                -- A non-empty blocker reason is appended so the player can see
+                -- WHY the entry is greyed rather than just that it is.
+                if btn.lockedReason and btn.lockedReason ~= "" then
+                    return string.format(" %s (%s)", def.label or def.key, btn.lockedReason)
+                end
+                return " " .. (def.label or def.key)
+            end,
             clickableArea = { canvasX + CHECKBOX_X + indent, y, Constants.SCREEN.RIGHT_GAP - 12 - indent, CHECKBOX_SIZE },
             box = { canvasX + CHECKBOX_X + indent, y, CHECKBOX_SIZE, CHECKBOX_SIZE },
             toggleState = Roguemon.OptionsManager.getValue(def.key) == true,
-            toggleColor = isParentOff(def) and DISABLED_COLOR or "Positive text",
-            textColor = isParentOff(def) and DISABLED_COLOR or "Default text",
+            lockedReason = lockedReason(def),
+            toggleColor = lockedReason(def) and DISABLED_COLOR or "Positive text",
+            textColor = lockedReason(def) and DISABLED_COLOR or "Default text",
             pageIndex = pageIndex,
             isVisible = function() return Pager.currentPage == pageIndex end,
             updateSelf = function(btn)
                 btn.toggleState = (Roguemon.OptionsManager.getValue(def.key) == true)
-                local off = isParentOff(def)
+                btn.lockedReason = lockedReason(def)
+                local off = btn.lockedReason ~= nil
                 btn.toggleColor = off and DISABLED_COLOR or "Positive text"
                 btn.textColor = off and DISABLED_COLOR or "Default text"
             end,
             onClick = function(btn)
-                if isParentOff(def) then return end
+                if lockedReason(def) then return end
+                -- OFF -> ON transitions may need to resolve a conflict with
+                -- another setting first (e.g. leaderboard prompting to disable
+                -- Open Book). The hook returns true to allow the toggle, false
+                -- to abort it. The hook itself applies any side effects.
+                local currentlyOn = Roguemon.OptionsManager.getValue(def.key) == true
+                if not currentlyOn and def.confirmBeforeEnable then
+                    if not def.confirmBeforeEnable() then return end
+                end
                 btn.toggleState = Roguemon.OptionsManager.toggle(def.key)
                 Program.redraw(true)
             end,
@@ -136,7 +163,7 @@ function self.drawScreen()
         end
     end
 
-    -- Layout below items: [pager row | separator | Edit Stats label | Edit Stats buttons].
+    -- Layout below items: [pager row | separator | Manual Seed button].
     -- Separator/footer Y are fixed regardless of page count or pager visibility, so the
     -- footer never shifts and never overflows the bottom border.
     local pagerRowY = START_Y + ITEMS_PER_PAGE * LINE_HEIGHT + 2
@@ -158,37 +185,22 @@ function self.drawScreen()
         Theme.COLORS["Upper box border"]
     )
 
-    local labelY = separatorY + 4
-    Drawing.drawText(canvas.x + TEXT_X, labelY, "Edit Stats", Theme.COLORS["Default text"], canvas.shadow)
-    local buttonY = labelY + 12
-    self.Buttons.StatsByType.box = { canvas.x + 6, buttonY, 55, 11 }
-    self.Buttons.StatsByPokemon.box = { canvas.x + 70, buttonY, 55, 11 }
+    -- Manual Seed entry point beneath the pagination controls, spanning the box
+    -- width with a tight 2px margin. Edit Stats was removed from the UI (still
+    -- reachable via Roguemon.StatsEditor from the Lua console).
+    self.Buttons.ManualSeed.box = { canvas.x + 2, separatorY + 5, canvas.w - 4, 13 }
 
     self.drawButtons(suppressButtons, self.Buttons)
 end
 
 self.Buttons = {
     Back = Drawing.createUIElementBackButton(closeScreen, "Default text"),
-    StatsByType = {
+    ManualSeed = {
         type = Constants.ButtonTypes.FULL_BORDER,
-        getText = function() return "by Type" end,
-        box = { 0, 0, 55, 11 },
+        getText = function() return "Manual Seed" end,
+        box = { 0, 0, 90, 13 },
         onClick = function()
-            if Roguemon.StatsEditor then
-                Roguemon.StatsEditor.showByType()
-            end
-        end,
-        boxColors = { "Upper box border" },
-        textColor = "Default text",
-    },
-    StatsByPokemon = {
-        type = Constants.ButtonTypes.FULL_BORDER,
-        getText = function() return "by Pokemon" end,
-        box = { 0, 0, 55, 11 },
-        onClick = function()
-            if Roguemon.StatsEditor then
-                Roguemon.StatsEditor.showByPokemon()
-            end
+            Program.changeScreenView(Roguemon.Screens.ManualSeedScreen)
         end,
         boxColors = { "Upper box border" },
         textColor = "Default text",

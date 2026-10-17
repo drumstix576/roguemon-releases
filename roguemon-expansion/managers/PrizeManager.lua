@@ -141,7 +141,7 @@ local function getPrizeStateOffsets()
         teraOrbType = GameSettings.prizeStateTeraOrbTypeOffset,
         hyperStat = GameSettings.prizeStateHyperTrainingStatOffset,
         potionInvestmentLastSegment = GameSettings.prizeStatePotionInvestmentLastSegmentOffset,
-        potionInvestmentValue = GameSettings.prizeStatePotionInvestmentValueOffset,
+        potionInvestmentStep = GameSettings.prizeStatePotionInvestmentStepOffset,
         potionInvestmentOfferItem = GameSettings.prizeStatePotionInvestmentOfferItemOffset,
         natureMintBoost = GameSettings.prizeStateNatureMintBoostOffset,
         natureMintNerf = GameSettings.prizeStateNatureMintNerfOffset,
@@ -364,7 +364,7 @@ function self.readPrizeState()
                 teraOrbType = b(buf, offsets.teraOrbType),
                 hyperTrainingStat = b(buf, offsets.hyperStat),
                 potionInvestmentLastSegmentId = b(buf, offsets.potionInvestmentLastSegment),
-                potionInvestmentValue = w(buf, offsets.potionInvestmentValue),
+                potionInvestmentStep = w(buf, offsets.potionInvestmentStep),
                 potionInvestmentOfferItemId = w(buf, offsets.potionInvestmentOfferItem),
                 natureMintBoostStat = b(buf, offsets.natureMintBoost),
                 natureMintNerfStat = b(buf, offsets.natureMintNerf),
@@ -418,7 +418,7 @@ function self.readPrizeState()
         teraOrbType = Memory.readbyte(base + offsets.teraOrbType),
         hyperTrainingStat = Memory.readbyte(base + offsets.hyperStat),
         potionInvestmentLastSegmentId = Memory.readbyte(base + offsets.potionInvestmentLastSegment),
-        potionInvestmentValue = Memory.readword(base + offsets.potionInvestmentValue),
+        potionInvestmentStep = Memory.readword(base + offsets.potionInvestmentStep),
         potionInvestmentOfferItemId = Memory.readword(base + offsets.potionInvestmentOfferItem),
         natureMintBoostStat = Memory.readbyte(base + offsets.natureMintBoost),
         natureMintNerfStat = Memory.readbyte(base + offsets.natureMintNerf),
@@ -1247,8 +1247,8 @@ function self.debugPrizeState()
         tostring(state.natureMintBoostStat), tostring(state.natureMintNerfStat),
         tostring(state.starterPackMove), tostring(state.starterPackOption))
 
-    Utils.printDebug("investmentValue=%s lastSegment=%s offerItem=%s",
-        tostring(state.potionInvestmentValue), tostring(state.potionInvestmentLastSegmentId),
+    Utils.printDebug("investmentStep=%s lastSegment=%s offerItem=%s",
+        tostring(state.potionInvestmentStep), tostring(state.potionInvestmentLastSegmentId),
         tostring(state.potionInvestmentOfferItemId))
 
     Utils.printDebug("roguestoneOfferIndex=%s roguestoneOfferHpCost=%s",

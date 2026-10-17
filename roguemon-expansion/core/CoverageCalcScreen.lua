@@ -16,6 +16,65 @@ local function isHybrid(entry)
 	return type(entry) == "table" and entry._hybrid == true
 end
 
+-- Abilities that retype the user's Normal-type moves. A mon with one of these
+-- has no Normal coverage at all, so the Normal entry has to become the
+-- replacement type rather than sit alongside it. Keyed by name and resolved
+-- against the ROM's ability table, because ability ids move between builds.
+local RETYPE_ABILITIES = {
+	["aerilate"] = "FLYING",
+	["pixilate"] = "FAIRY",
+	["refrigerate"] = "ICE",
+	["galvanize"] = "ELECTRIC",
+}
+
+local retypeByAbilityId
+local function getRetypeTarget(abilityId)
+	if not abilityId or abilityId == 0 then
+		return nil
+	end
+	-- Not cached until at least one name resolves: AbilityData.Abilities is
+	-- populated from the ROM, and a scan run before that would cache an empty
+	-- table for the rest of the session.
+	if not retypeByAbilityId then
+		local resolved = {}
+		local found = false
+		for id = 1, AbilityData.getTotal(), 1 do
+			local ability = AbilityData.Abilities[id]
+			local typeName = ability and ability.name and RETYPE_ABILITIES[Utils.toLowerUTF8(ability.name)]
+			if typeName then
+				resolved[id] = PokemonData.Types[typeName]
+				found = true
+			end
+		end
+		if not found then
+			return nil
+		end
+		retypeByAbilityId = resolved
+	end
+	return retypeByAbilityId[abilityId]
+end
+
+local function retypeNormalCoverage(moveTypes, newType)
+	local normalIndex, hasNewType
+	for i, entry in ipairs(moveTypes) do
+		if not isHybrid(entry) then
+			if entry == PokemonData.Types.NORMAL then
+				normalIndex = i
+			elseif entry == newType then
+				hasNewType = true
+			end
+		end
+	end
+	if not normalIndex then
+		return
+	end
+	if hasNewType then
+		table.remove(moveTypes, normalIndex)
+	else
+		moveTypes[normalIndex] = newType
+	end
+end
+
 local baseGetPartyPokemonEffectiveMoveTypes = Roguemon.pristineOriginal(
 	"CoverageCalcScreen.getPartyPokemonEffectiveMoveTypes",
 	CoverageCalcScreen.getPartyPokemonEffectiveMoveTypes
@@ -25,7 +84,9 @@ local baseCreateButtons = Roguemon.pristineOriginal(
 	CoverageCalcScreen.createButtons
 )
 
--- Override: Flying Press resolves as Fighting * Flying combined, not as two
+-- Override: retyping abilities (Aerilate, Pixilate, Refrigerate, Galvanize)
+-- move the mon's Normal coverage to the type they grant, and Flying Press
+-- resolves as Fighting * Flying combined, not as two
 -- independent types. Represent it as a hybrid moveType entry so coverage
 -- multiplies both components (e.g. Ghost -> Fighting 0x * Flying 1x = 0x,
 -- rather than the Flying-only 1x that a standalone FLYING entry would give).
@@ -33,6 +94,16 @@ function self.getPartyPokemonEffectiveMoveTypes(slotNumber)
 	local moveTypes, moveIds = baseGetPartyPokemonEffectiveMoveTypes(slotNumber)
 	moveTypes = moveTypes or {}
 	moveIds = moveIds or {}
+
+	-- Aerilate and its siblings: the mon's Normal moves count as the retyped
+	-- type. Independent of the Flying Press handling below, which is Fighting.
+	local pokemon = Tracker.getPokemon(slotNumber or 1, true)
+	if pokemon then
+		local retypeTo = getRetypeTarget(PokemonData.getAbilityId(pokemon.pokemonID, pokemon.abilityNum))
+		if retypeTo then
+			retypeNormalCoverage(moveTypes, retypeTo)
+		end
+	end
 
 	local hasFlyingPress = false
 	for _, id in ipairs(moveIds) do
@@ -80,8 +151,9 @@ end
 -- The base tracker skips IDs 252-276 (vanilla Gen 3 placeholder gap) and
 -- hardcodes Shedinja as ID 303. The expansion ROM uses contiguous National Dex
 -- IDs, so the gap doesn't exist and Shedinja is ID 292 (not 303 = Mawile).
--- Also excludes cosmetic formes (ROM's isCosmeticForm flag) so they
--- don't inflate coverage counts. Additionally, hybrid moveType entries
+-- Also excludes cosmetic formes (ROM's isCosmeticForm flag) and Totem
+-- formes (isTotem flag) -- both are unobtainable in a run, so they
+-- shouldn't inflate coverage counts. Additionally, hybrid moveType entries
 -- (see getPartyPokemonEffectiveMoveTypes above) are evaluated as a product
 -- of their component types' effectiveness.
 function self.calculateCoverageTable(moveTypes, onlyFullyEvolved)
@@ -99,7 +171,7 @@ function self.calculateCoverageTable(moveTypes, onlyFullyEvolved)
 			return false
 		end
 		local pokemon = PokemonData.Pokemon[pokemonID]
-		if pokemon and pokemon.isCosmetic then
+		if pokemon and (pokemon.isCosmetic or pokemon.isTotem) then
 			return false
 		end
 		if onlyFullyEvolved and PokemonData.Pokemon[pokemonID].evolution ~= PokemonData.Evolutions.NONE then

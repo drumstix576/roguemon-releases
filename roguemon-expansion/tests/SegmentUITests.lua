@@ -22,6 +22,31 @@ local function withRestores(fn)
     if not ok then error(err) end
 end
 
+-- register() adds an Open Remaining row to the Controls tab, so a test that calls
+-- it needs the controls list and the Control rows SetupScreen.initialize builds.
+-- Adds them to the Constants and Options stubs already in place and stubs
+-- SetupScreen, so register() never lays out the live tracker's rows.
+local function controlsTabRows()
+    local ordered = { "Load next seed", "Toggle view", "Cycle through stats", "Mark stat", "Next page", "Previous page" }
+    local buttons = { ControlsEditAll = { box = { 10, 130, 40, 11 } } }
+    for i = 2, #ordered do
+        local y = 30 + i * 11
+        buttons["Control" .. ordered[i]] = { box = { 10, y, 100, 11 }, clickableArea = { 10, y, 100, 11 } }
+    end
+    return ordered, buttons
+end
+
+local function stubControlsTab(stubGlobal)
+    local ordered, buttons = controlsTabRows()
+    Constants.OrderedLists = { CONTROLS = ordered }
+    Constants.Font = { SIZE = 9 }
+    Constants.SCREEN.LINESPACING = 10
+    Options.CONTROLS = {}
+    Options.Defaults = { CONTROLS = {} }
+    Main.MetaSettings = {}
+    stubGlobal("SetupScreen", { Buttons = buttons })
+end
+
 local function testCapTextAndColorUnderCap()
     -- Utils.printDebug("[TEST] Testing cap text/under-cap color")
     withRestores(function(stubGlobal, stubField)
@@ -411,6 +436,193 @@ local function testCapsDisplayFallsBackWithoutGameSettings()
     return true
 end
 
+local function testStartedRouteWithA3RivalNextShowsHint()
+    withRestores(function(stubGlobal)
+        local segUI = Roguemon.SegmentUI
+
+        stubGlobal("GameSettings", { roguemonAscensionOffset = 0x100 })
+        stubGlobal("Roguemon", {
+            Core = { Utils = { readGameVar = function(off)
+                return off == 0x100 and 3 or 0
+            end } },
+            SegmentManager = {
+                State = {
+                    currentId = 8,       -- ROUTE6_11
+                    currentIndex = 8,
+                    flags = 0x01,        -- FLAG_STARTED
+                    optionalCount = 0,
+                    optionalQueue = {},
+                },
+                SegmentsById = {
+                    [8] = { id = 8, name = "Route 6/11", type = 0 },
+                    [9] = { id = 9, name = "Rival 4",    type = 2 },
+                    [10] = { id = 10, name = "Lt. Surge", type = 1 },
+                },
+                countTrainerProgress = function() return 2, 3, 2, 17 end,
+                isFullClearSegment = function() return false end,
+                readSegmentState = function()
+                    return Roguemon.SegmentManager.State
+                end,
+            },
+            PrizeManager = { readPrizeState = function() return { queueCount = 0 } end },
+            CurseManager = { getCurseForSegment = function() return nil end },
+            SegmentUI = segUI,
+        })
+
+        local text = segUI.getSegmentStatusText()
+        assert(string.find(text, "%(%+ Rival%?%)", 1) ~= nil,
+            string.format("Expected '(+ Rival?)' name decoration, got: %s", text))
+        assert(string.find(text, "%+ 1%?$", 1) ~= nil,
+            string.format("Expected '+ 1?' total suffix, got: %s", text))
+    end)
+    return true
+end
+
+local function testStartedRouteWithoutA3RivalNextShowsPlainTotal()
+    withRestores(function(stubGlobal)
+        local segUI = Roguemon.SegmentUI
+
+        -- Ascension < 3: the rival hint must not appear even if next is a
+        -- rival-type segment in the order.
+        stubGlobal("GameSettings", { roguemonAscensionOffset = 0x100 })
+        stubGlobal("Roguemon", {
+            Core = { Utils = { readGameVar = function() return 1 end } },
+            SegmentManager = {
+                State = {
+                    currentId = 8,
+                    currentIndex = 8,
+                    flags = 0x01,
+                    optionalCount = 0,
+                    optionalQueue = {},
+                },
+                SegmentsById = {
+                    [8] = { id = 8, name = "Route 6/11", type = 0 },
+                    [9] = { id = 9, name = "Rival 4",    type = 2 },
+                },
+                countTrainerProgress = function() return 2, 3, 2, 17 end,
+                isFullClearSegment = function() return false end,
+                readSegmentState = function()
+                    return Roguemon.SegmentManager.State
+                end,
+            },
+            PrizeManager = { readPrizeState = function() return { queueCount = 0 } end },
+            CurseManager = { getCurseForSegment = function() return nil end },
+            SegmentUI = segUI,
+        })
+
+        local text = segUI.getSegmentStatusText()
+        assert(string.find(text, "Rival") == nil,
+            string.format("Did not expect 'Rival' hint at A1, got: %s", text))
+        assert(string.find(text, "total$") ~= nil,
+            string.format("Expected plain 'total' suffix, got: %s", text))
+    end)
+    return true
+end
+
+-- The Open Remaining shortcut acts on a lone tap, on release: holding L and then
+-- pressing R (L+R closes pop-ups), or the reverse, must not open the panel.
+local function runRemainingShortcut(frames)
+    local opened = 0
+    withRestores(function(stubGlobal, stubField)
+        local joypad = {}
+        local panel = { Buttons = { Back = { onClick = function() end } } }
+        local tracker = {}
+        stubGlobal("Options", { CONTROLS = { ["Open Remaining"] = "L" } })
+        stubGlobal("Input", { allowJoypad = true, NO_KEY_MAPPING = "",
+            getJoypadInputFormatted = function() return joypad end })
+        stubGlobal("SetupScreen", { inProcessOfBinding = function() return false end })
+        stubGlobal("Battle", { inActiveBattle = function() return false end })
+        stubGlobal("TrackerScreen", tracker)
+        stubGlobal("Program", { currentScreen = tracker,
+            changeScreenView = function(screen) opened = opened + 1 end })
+        stubField(Roguemon.Screens, "SegmentProgressScreen", panel)
+        stubField(Roguemon, "ScreenManager", {})
+        for _, held in ipairs(frames) do
+            joypad = held
+            Roguemon.SegmentUI.checkRemainingShortcut()
+        end
+    end)
+    return opened
+end
+
+local function testRemainingShortcutTapOpens()
+    assert(runRemainingShortcut({ { L = true }, { L = true }, {} }) == 1, "a lone L tap should open Remaining")
+    return true
+end
+
+local function testRemainingShortcutIgnoresLThenR()
+    assert(runRemainingShortcut({ { L = true }, { L = true, R = true }, { R = true }, {} }) == 0,
+        "L then R (L+R) should not open Remaining")
+    return true
+end
+
+local function testRemainingShortcutIgnoresRThenL()
+    assert(runRemainingShortcut({ { R = true }, { R = true, L = true }, { L = true }, {} }) == 0,
+        "R then L (L+R) should not open Remaining")
+    return true
+end
+
+-- Builds the core tables register() touches, standalone.
+local function stubCoreForRegister(stubGlobal)
+    local function trackerScreen()
+        return { Buttons = { TrainerSummary = {} }, CarouselTypes = {}, CarouselItems = {} }
+    end
+    stubGlobal("Constants", {
+        SCREEN = { WIDTH = 240, RIGHT_GAP = 150, MARGIN = 5 },
+        ButtonTypes = { NO_BORDER = 1, FULL_BORDER = 2, PIXELIMAGE = 3 },
+    })
+    stubGlobal("Options", {})
+    stubGlobal("Main", { IsOnBizhawk = function() return true end })
+    stubControlsTab(stubGlobal)
+    stubGlobal("TrackerScreen", trackerScreen())
+    stubGlobal("BattleDetailsScreen", nil)
+    stubGlobal("Drawing", { Colors = { GREEN = 0 } })
+    return trackerScreen
+end
+
+local function testUnregisterRemovesRemainingRow()
+    withRestores(function(stubGlobal)
+        stubCoreForRegister(stubGlobal)
+        local editY = SetupScreen.Buttons["ControlToggle view"].box[2]
+
+        local segUI = dofile(Roguemon.extensionDir .. "SegmentUI.lua")
+        segUI.register()
+        segUI.unregister()
+
+        assert(SetupScreen.Buttons["ControlOpen Remaining"] == nil, "unregister should remove the Open Remaining row")
+        assert(#Constants.OrderedLists.CONTROLS == 6, "unregister should take Open Remaining off the controls list")
+        assert(Options.CONTROLS["Open Remaining"] == nil, "unregister should drop the Open Remaining binding")
+        assert(SetupScreen.Buttons["ControlToggle view"].box[2] == editY, "unregister should put the core rows back")
+    end)
+    return true
+end
+
+-- A tracker restart re-runs the core files before the new extension tears the old
+-- one down, so the old instance's unregister meets a fresh SetupScreen with no
+-- Control rows yet (SetupScreen.initialize builds them after the extension loads).
+-- It used to lay those missing rows out and fail, leaving the game unsupported.
+local function testUnregisterAfterCoreReload()
+    withRestores(function(stubGlobal)
+        local trackerScreen = stubCoreForRegister(stubGlobal)
+
+        local segUI = dofile(Roguemon.extensionDir .. "SegmentUI.lua")
+        segUI.register()
+        assert(SetupScreen.Buttons["ControlOpen Remaining"] ~= nil, "register should add the Open Remaining row")
+
+        -- What startTracker leaves: every core table rebuilt, no Control rows yet.
+        local freshOrdered = controlsTabRows()
+        Constants.OrderedLists = { CONTROLS = freshOrdered }
+        stubGlobal("SetupScreen", { Buttons = {} })
+        stubGlobal("Options", { CONTROLS = {}, Defaults = { CONTROLS = {} } })
+        stubGlobal("TrackerScreen", trackerScreen())
+
+        segUI.unregister()
+        assert(#freshOrdered == 6, "the fresh controls list should be left alone")
+        assert(next(SetupScreen.Buttons) == nil, "the fresh SetupScreen should be left alone")
+    end)
+    return true
+end
+
 function SegmentUITests.run()
     Utils.printDebug("[TEST] Running SegmentUI tests")
     local tests = Roguemon.Tests
@@ -424,6 +636,13 @@ function SegmentUITests.run()
         tests.runTest("full clear carousel highlight", testFullClearCarouselHighlight),
         tests.runTest("optional queue shows in carousel", testOptionalQueueShowsInCarousel),
         tests.runTest("no optional shows base segment", testNoOptionalShowsBaseSegment),
+        tests.runTest("started route with A3 rival next shows hint", testStartedRouteWithA3RivalNextShowsHint),
+        tests.runTest("started route without A3 rival next shows plain total", testStartedRouteWithoutA3RivalNextShowsPlainTotal),
+        tests.runTest("Open Remaining opens on a lone tap", testRemainingShortcutTapOpens),
+        tests.runTest("Open Remaining ignores L then R", testRemainingShortcutIgnoresLThenR),
+        tests.runTest("Open Remaining ignores R then L", testRemainingShortcutIgnoresRThenL),
+        tests.runTest("unregister removes the Open Remaining row", testUnregisterRemovesRemainingRow),
+        tests.runTest("unregister after a core reload leaves the fresh core alone", testUnregisterAfterCoreReload),
     }
 
     local allPassed = true

@@ -43,56 +43,98 @@ local function drawItemInfoScreen(itemId)
 	Drawing.drawButton(InfoScreen.Buttons.BackTop, boxInfoTopShadow)
 end
 
+-- Curse screen text is white over a hard black drop shadow whatever the
+-- theme, so it reads over card art. Both passes are drawn shadowless: the
+-- theme's shadow toggle and PixelFont's blended shadow would soften it.
+local CURSE_TEXT_COLOR = 0xFFFFFFFF
+local CURSE_SHADOW_COLOR = 0xFF000000
+-- Panel-relative y of the separator line and the first description line.
+local CURSE_SEPARATOR_Y = 25
+local CURSE_DESCRIPTION_Y = 30
+
+local function drawCurseText(x, y, text, size)
+	local noShadow = _G.PixelFont and false
+	Drawing.drawText(x + 1, y + 1, text, CURSE_SHADOW_COLOR, noShadow, size)
+	Drawing.drawText(x, y, text, CURSE_TEXT_COLOR, noShadow, size)
+end
+
 local function drawCurseInfoScreen(curseId)
 	local rightEdge = Constants.SCREEN.RIGHT_GAP - (2 * Constants.SCREEN.MARGIN)
 	local bottomEdge = Constants.SCREEN.HEIGHT - (2 * Constants.SCREEN.MARGIN)
+	local panelX = Constants.SCREEN.WIDTH
 
-	local boxInfoTopShadow = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
-
-	local offsetX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 2
+	local offsetX = panelX + Constants.SCREEN.MARGIN + 2
 	local offsetY = 0 + Constants.SCREEN.MARGIN + 3
 	local linespacing = Constants.SCREEN.LINESPACING - 1
 
+	local CurseManager = Roguemon.CurseManager
+	local card = CurseManager.CurseCards[curseId]
+	local marginColor = CurseManager.getCurseThemeColor("Main background")
+
 	Drawing.drawBackgroundAndMargins()
-	gui.defaultTextBackground(Theme.COLORS["Upper box background"])
-	gui.drawRectangle(Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, Constants.SCREEN.MARGIN, rightEdge, bottomEdge, Theme.COLORS["Upper box border"], Theme.COLORS["Upper box background"])
+	if card then
+		-- The card fills the whole panel; the margins and a white border are
+		-- drawn over its edges, as in the artists' mockups.
+		local imagePath = Roguemon.Paths.IMAGES_DIRECTORY .. "curse_cards" .. FileManager.slash .. card.image
+		gui.drawImage(imagePath, panelX, 0)
+		local margin = Constants.SCREEN.MARGIN
+		gui.drawRectangle(panelX, 0, Constants.SCREEN.RIGHT_GAP - 1, margin - 1, marginColor, marginColor)
+		gui.drawRectangle(panelX, Constants.SCREEN.HEIGHT - margin, Constants.SCREEN.RIGHT_GAP - 1, margin - 1, marginColor, marginColor)
+		gui.drawRectangle(panelX, 0, margin - 1, Constants.SCREEN.HEIGHT - 1, marginColor, marginColor)
+		gui.drawRectangle(panelX + Constants.SCREEN.RIGHT_GAP - margin, 0, margin - 1, Constants.SCREEN.HEIGHT - 1, marginColor, marginColor)
+		gui.drawRectangle(panelX + margin, margin, rightEdge, bottomEdge, CURSE_TEXT_COLOR)
+	else
+		gui.drawRectangle(panelX + Constants.SCREEN.MARGIN, Constants.SCREEN.MARGIN, rightEdge, bottomEdge,
+			CurseManager.getCurseThemeColor("Upper box border"), CurseManager.getCurseThemeColor("Upper box background"))
+	end
 
 	-- Curse NAME
-	local CurseManager = Roguemon and Roguemon.CurseManager
-	local curseName = Constants.BLANKLINE
-	local description = ""
-	if CurseManager then
-		curseName = CurseManager.getCurseName(curseId) or Constants.BLANKLINE
-		description = CurseManager.getExtendedDescription(curseId)
+	local curseName = Utils.toUpperUTF8(CurseManager.getCurseName(curseId) or Constants.BLANKLINE)
+	local headerSize = #curseName > HEADER_MAX_CHARS and 12 or Constants.Font.HEADERSIZE
+	drawCurseText(offsetX - 2, offsetY - 4, curseName, headerSize)
+
+	-- SEPARATOR: the artist's, or a plain line for a curse without one.
+	local separator = card and card.separator
+	if separator then
+		Drawing.drawImageAsPixels(separator.pixels, panelX + separator.x, CURSE_SEPARATOR_Y - (separator.lineRow - 1),
+			{ CURSE_TEXT_COLOR, CURSE_SHADOW_COLOR })
+	else
+		local lineLeft = offsetX + 3
+		local lineRight = panelX + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN - 6
+		gui.drawLine(lineLeft + 1, CURSE_SEPARATOR_Y + 1, lineRight + 1, CURSE_SEPARATOR_Y + 1, CURSE_SHADOW_COLOR)
+		gui.drawLine(lineLeft, CURSE_SEPARATOR_Y, lineRight, CURSE_SEPARATOR_Y, CURSE_TEXT_COLOR)
 	end
-	Drawing.drawHeader(offsetX - 2, offsetY - 4, Utils.toUpperUTF8(curseName), Theme.COLORS["Default text"], boxInfoTopShadow)
-	offsetY = offsetY + linespacing * 2 - 5
+	offsetY = CURSE_DESCRIPTION_Y
 
 	-- DESCRIPTION
+	local description = CurseManager.getExtendedDescription(curseId)
 	if description ~= "" then
 		local wrappedSummary = Utils.getWordWrapLines(description, 30)
 		for _, line in pairs(wrappedSummary) do
-			Drawing.drawText(offsetX, offsetY, line, Theme.COLORS["Default text"], boxInfoTopShadow)
+			drawCurseText(offsetX, offsetY, line)
 			offsetY = offsetY + linespacing
 		end
 	end
 
 	-- Debilitation stat delta for the chosen mon (natural -> debilitated).
-	if CurseManager and curseId == CurseManager.CurseId.DEBILITATION then
+	if curseId == CurseManager.CurseId.DEBILITATION then
 		local snap = CurseManager.readDebilitationSnapshot()
 		if snap then
 			offsetY = offsetY + linespacing
-			Drawing.drawText(offsetX, offsetY,
-				string.format("Atk: %d -> %d", snap.naturalAtk, snap.currentAtk),
-				Theme.COLORS["Default text"], boxInfoTopShadow)
+			drawCurseText(offsetX, offsetY, string.format("Atk: %d -> %d", snap.naturalAtk, snap.currentAtk))
 			offsetY = offsetY + linespacing
-			Drawing.drawText(offsetX, offsetY,
-				string.format("SpA: %d -> %d", snap.naturalSpA, snap.currentSpA),
-				Theme.COLORS["Default text"], boxInfoTopShadow)
+			drawCurseText(offsetX, offsetY, string.format("SpA: %d -> %d", snap.naturalSpA, snap.currentSpA))
 		end
 	end
 
-	Drawing.drawButton(InfoScreen.Buttons.BackTop, boxInfoTopShadow)
+	-- ARTIST, bottom-left, level with the back arrow.
+	local backButton = InfoScreen.Buttons.BackTop
+	if card and card.artist then
+		drawCurseText(offsetX, backButton.box[2], card.artist)
+	end
+
+	Drawing.drawImageAsPixels(backButton.image, backButton.box[1] + 1, backButton.box[2] + 1, { CURSE_SHADOW_COLOR })
+	Drawing.drawImageAsPixels(backButton.image, backButton.box[1], backButton.box[2], { CURSE_TEXT_COLOR })
 end
 
 local function drawAbilityInfoScreen(abilityId)

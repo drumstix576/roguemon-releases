@@ -57,6 +57,12 @@ function self.updateResources()
         GameSettings.abilityEnhancedDescCount or 0
     )
 
+    -- ROGUEMON_PROFILE_ENABLE_MODERN_ABILITIES (bit 3) in the build profile. The
+    -- enhanced ROM descriptions are ungated and always describe modern behavior,
+    -- so only prefer the enhanced text when the ROM reports modern abilities;
+    -- otherwise the core tracker's Gen 3 descriptions are the accurate ones.
+    local modernAbilities = ((GameSettings.roguemonBuildProfile or 0) & 0x08) ~= 0
+
     -- Abilities that need AbilityData.Values entries.
     -- Maps ROM ability name → Values key (e.g. "Wandering Spirit" → "WanderingSpiritId").
     -- Explicit keys avoid gsub issues with hyphens ("Well-Baked Body" → "WellBakedBodyId").
@@ -79,6 +85,15 @@ function self.updateResources()
         ["Earth Eater"]      = "EarthEaterId",
     }
 
+    -- Compare ability identity ignoring cosmetic spelling/spacing differences
+    -- between the tracker's name table and the ROM (e.g. "Compoundeyes" vs
+    -- "Compound Eyes", "Lightningrod" vs "Lightning Rod"). Used below to spot
+    -- reused core entries that the expansion's renumbering left describing a
+    -- DIFFERENT ability.
+    local function normalizeName(n)
+        return n and (n:lower():gsub("%W", "")) or ""
+    end
+
     for id = 1, abilitiesCount do
         local base = id * abilitySize
         local name = s(buf, base + offsetName - 1, nameLen - 1)
@@ -92,13 +107,27 @@ function self.updateResources()
         local enhancedPtr = enhancedPtrs[id]
 
         local ability = AbilityData.Abilities[id] or { id = id }
+
+        -- Past the Gen 3 boundary the expansion renumbers abilities (e.g. id 76
+        -- Cacophony -> Air Lock, id 77 Air Lock -> Tangled Feet). A reused core
+        -- entry then carries the description of a DIFFERENT ability, raw-set from
+        -- the language file, which would shadow the __index loader below. Drop it
+        -- so the loader (ROM, the source of truth) wins.
+        if ability.name and normalizeName(ability.name) ~= normalizeName(name) then
+            ability.description = nil
+            ability.descriptionEmerald = nil
+        end
+
         ability.id = id
         ability.name = name
 
-        -- Lightning Rod changed behavior in Gen 5 (added Sp.Atk boost + immunity).
-        -- The core tracker pre-sets ability.description from its language file, which
-        -- blocks the __index lazy-loader below. Clear it so the enhanced ROM description wins.
-        if name == "Lightning Rod" then
+        -- The core tracker pre-sets ability.description from its Gen 3 language file,
+        -- which shadows the __index lazy-loader below. On modern builds every ability
+        -- has an enhanced ROM description (the source of truth, kept current across
+        -- gens), so clear the pre-set text and let the loader read the enhanced version.
+        -- Covers Gen 1-3 abilities whose behavior changed later: Inner Focus's Intimidate
+        -- immunity, Lightning Rod's Sp.Atk boost, and so on.
+        if enhancedPtr and modernAbilities then
             ability.description = nil
         end
 

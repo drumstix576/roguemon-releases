@@ -365,8 +365,8 @@ function SCREEN.RoguemonGameFuncs.readStatus2(index)
     -- INGRAIN
     if vol3Map[9] then
         table.insert(MON_DETAILS, SCREEN.IBattleDetail:new({
-            MoveId = MoveData.Values.IngrainId or 275,
-            getText = function() return Resources.Game.MoveNames[MoveData.Values.IngrainId or 275] or Constants.BLANKLINE end,
+            MoveId = MoveData.Values.IngrainId,
+            getText = function() return Resources.Game.MoveNames[MoveData.Values.IngrainId] or Constants.BLANKLINE end,
         }))
     end
     -- YAWN

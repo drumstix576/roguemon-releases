@@ -149,6 +149,16 @@ self.Buttons = {
         type = Constants.ButtonTypes.FULL_BORDER,
         getText = function() return "Reject" end,
         box = { 0, 0, BUTTON_WIDTH, BUTTON_HEIGHT },
+        -- Free offers (HP cost 0) hide the Reject button: there's no
+        -- legitimate reason to decline a free Roguestone, and the slot
+        -- consumes on fire regardless, so a misclick would otherwise
+        -- strand the player with no recovery. ROM mirrors this gate by
+        -- treating hpCost==0 as accepted even if a decline byte arrives.
+        isVisible = function()
+            local state = getState()
+            local cost = state and state.roguestoneOfferHpCost
+            return cost ~= nil and cost ~= ROGUESTONE_NO_OFFER and cost > 0
+        end,
         onClick = function()
             self.submitDecision(false)
         end,

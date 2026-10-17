@@ -5,6 +5,11 @@ local self = {
     wrapPixelsInline = Roguemon.ScreenManager.wrapPixelsInline,
     Paths = Roguemon.Paths,
     isActive = false,
+    -- Set by BuyPhaseManager.openShopScreen when a shop is begun: true only for
+    -- Pop-up Shop voucher opens. finishShopPhase reads it so closing a voucher
+    -- shop never advances the end-of-segment checklist. Stamped per fresh open;
+    -- beginShop/Reset (inventory rebuild only) intentionally leave it untouched.
+    openedByVoucher = false,
     ShopState = {
         hp = 0,
         status = 0,

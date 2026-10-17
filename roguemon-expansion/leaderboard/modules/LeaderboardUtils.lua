@@ -1,6 +1,12 @@
 local self = {}
 
+-- The player's opt-in AND the ROM precondition. Rule enforcement is checked
+-- here, not only on the options checkbox, so turning it off mid-run makes the
+-- tracker side inert on the same poll the ROM's own gate latches — otherwise
+-- the checkbox would grey out while isActive() kept forwarding events until
+-- the next battle tripped the ROM gate.
 function self.isLeaderboardEnabled()
+  if not Roguemon.TrackerDataManager.areRulesEnforced() then return false end
   return Roguemon.OptionsManager.isEnabled("Enable Leaderboard") or false
 end
 
@@ -193,15 +199,16 @@ end
 
 local lastFrame = 0
 
+-- True while emulator frames advance monotonically; false on the first sample
+-- after a backward jump (a savestate load or a rewind). The baseline resyncs on
+-- every call, including the discontinuous one, so one rewind reports once
+-- instead of on every poll until the frame counter climbs back past its old
+-- high-water mark.
 function self.checkFrameContinuity()
   local currentFrame = emu.framecount()
-
-  if currentFrame < lastFrame then
-    return false
-  end
-
+  local continuous = currentFrame >= lastFrame
   lastFrame = currentFrame
-  return true
+  return continuous
 end
 
 return self

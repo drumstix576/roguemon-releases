@@ -26,12 +26,37 @@ local function testSetIconOption()
     return Roguemon.Tests.validateResults(GraphicsTests, res)
 end
 
+local function testShinyIconPath()
+    local res = {}
+    local graphics = Roguemon.Core.Graphics
+    local iconset = Options.getIconSet()
+    local speciesId = PokemonData.getIdFromName("Bulbasaur")
+    assert(speciesId ~= nil, "Bulbasaur not found in PokemonData")
+    local species = tostring(speciesId)
+
+    assert(iconset.shinyFolder ~= nil, "RogueMon icon set has no shinyFolder")
+    local normalPath = Drawing.getImagePath("PokemonIcon", species)
+
+    graphics.drawingShinyIcon = true
+    local shinyPath = Drawing.getImagePath("PokemonIcon", species)
+    graphics.drawingShinyIcon = false
+
+    assert(shinyPath == FileManager.buildImagePath(iconset.shinyFolder, species, iconset.extension),
+        "shiny icon path does not resolve into the shiny folder: " .. tostring(shinyPath))
+    assert(FileManager.fileExists(shinyPath), "shiny icon file missing: " .. tostring(shinyPath))
+    assert(Drawing.getImagePath("PokemonIcon", species) == normalPath,
+        "icon path stays in the shiny folder after the shiny draw ends")
+
+    return Roguemon.Tests.validateResults(GraphicsTests, res)
+end
+
 function GraphicsTests.run()
     Utils.printDebug("[TEST] Running graphics tests")
     local tests = Roguemon.Tests
 
     local results = {
         tests.runTest("set icon option", testSetIconOption),
+        tests.runTest("shiny icon path", testShinyIconPath),
     }
 
     local allPassed = true

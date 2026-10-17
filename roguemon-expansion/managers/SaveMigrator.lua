@@ -422,14 +422,13 @@ function self.loadFromDisk(filePath)
     return result
 end
 
---- Get the cache file path for a given profile.
----@param profile string "expansion" or "classic"
+--- Get the cache file path. The "expansion" suffix dates from when a Classic
+--- profile had its own cache; it is kept so an existing cache is still found.
 ---@return string cache file path
-function self.getCachePath(profile)
+function self.getCachePath()
     local ext = _G.Roguemon
     if not ext or not ext.extensionDir then return nil end
-    local suffix = (profile == "classic") and "classic" or "expansion"
-    return ext.extensionDir .. "migration_cache_" .. suffix .. ".lua"
+    return ext.extensionDir .. "migration_cache_expansion.lua"
 end
 
 --- Import cached stats into the running ROM's SaveBlock3 memory.
@@ -574,8 +573,7 @@ function self.tryImportCachedStats()
     local ext = _G.Roguemon
     if not ext then return false end
 
-    local profile = ext.isClassicProfile and ext.isClassicProfile() and "classic" or "expansion"
-    local cachePath = self.getCachePath(profile)
+    local cachePath = self.getCachePath()
     if not cachePath then return false end
     if not FileManager.fileExists(cachePath) then return false end
 

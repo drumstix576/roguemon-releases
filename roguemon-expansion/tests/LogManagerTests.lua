@@ -380,15 +380,17 @@ local function testRouteEncounterData()
     for mapId, route in pairs(RandomizerLog.Data.Routes) do
         if route.EncountersAreas then
             for key, area in pairs(route.EncountersAreas) do
-                if key ~= "Trainers" and area.pokemon and #area.pokemon > 0 then
+                -- parseRoutes keys each area's encounters by species id:
+                -- area.pokemon[species] = { index, levelMin, levelMax, rate }.
+                if key ~= "Trainers" and area.pokemon and next(area.pokemon) ~= nil then
                     routesWithEncounters = routesWithEncounters + 1
 
-                    -- Verify each encounter entry has pokemonID and level
-                    for j, encounter in ipairs(area.pokemon) do
-                        assert(encounter.pokemonID ~= nil and encounter.pokemonID > 0, string.format(
-                            "Route %s area encounter[%d] has invalid pokemonID", tostring(mapId), j))
-                        assert(encounter.minLv ~= nil and encounter.minLv > 0, string.format(
-                            "Route %s area encounter[%d] has invalid level", tostring(mapId), j))
+                    for species, encounter in pairs(area.pokemon) do
+                        assert(type(species) == "number" and species > 0, string.format(
+                            "Route %s area %s has invalid species key %s", tostring(mapId), key, tostring(species)))
+                        assert(encounter.levelMin ~= nil and encounter.levelMin > 0
+                            and encounter.levelMax ~= nil and encounter.levelMax >= encounter.levelMin, string.format(
+                            "Route %s area %s species %d has invalid levels", tostring(mapId), key, species))
                     end
 
                     break -- one area per route is enough

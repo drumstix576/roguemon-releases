@@ -155,10 +155,6 @@ local function readTrainerLists(ptr)
     return trainers, mandatory, trainerInfo
 end
 
-local function resolveEntrySize(nameOffset)
-    return (nameOffset or 0x04) + 28
-end
-
 local function buildChoicePairs(entries)
     local pairs = {}
     local map = {}
@@ -180,32 +176,25 @@ local function buildChoicePairs(entries)
     return pairs, map
 end
 
-local function readSegmentDef(segId, baseAddr, entrySize, nameOffset)
+local function readSegmentDef(segId, baseAddr, entrySize)
     local base = baseAddr + (segId * entrySize)
-    local id = Memory.readbyte(base)
-    local segType = Memory.readbyte(base + 1)
-    local completion = Memory.readbyte(base + 2)
+    local id = Memory.readbyte(base + GameSettings.segmentDefIdOffset)
+    local segType = Memory.readbyte(base + GameSettings.segmentDefTypeOffset)
+    local completion = Memory.readbyte(base + GameSettings.segmentDefCompletionOffset)
     local hpCapDelta = Memory.readword(base + GameSettings.segmentDefHpCapDeltaOffset)
     local statusCapDelta = Memory.readbyte(base + GameSettings.segmentDefStatusCapDeltaOffset)
     local flags = Memory.readbyte(base + GameSettings.segmentDefFlagsOffset)
-    local namePtr = Memory.readdword(base + nameOffset)
+    local namePtr = Memory.readdword(base + GameSettings.segmentDefNameOffset)
     if not namePtr or namePtr == 0 then
         return nil
     end
 
-    local routesOffset = nameOffset + 4
-    local trainersOffset = nameOffset + 8
-    local choicePairsOffset = nameOffset + 12
-    local itemsOffset = nameOffset + 16
-    local itemsBeforeOffset = nameOffset + 20
-    local endLayoutOffset = nameOffset + 24
-
-    local routesPtr = Memory.readdword(base + routesOffset)
-    local trainersPtr = Memory.readdword(base + trainersOffset)
-    local choicePairsPtr = Memory.readdword(base + choicePairsOffset)
-    local itemsPtr = Memory.readdword(base + itemsOffset)
-    local itemsBeforePtr = Memory.readdword(base + itemsBeforeOffset)
-    local endLayout = Memory.readword(base + endLayoutOffset)
+    local routesPtr = Memory.readdword(base + GameSettings.segmentDefRoutesOffset)
+    local trainersPtr = Memory.readdword(base + GameSettings.segmentDefTrainersOffset)
+    local choicePairsPtr = Memory.readdword(base + GameSettings.segmentDefChoicePairsOffset)
+    local itemsPtr = Memory.readdword(base + GameSettings.segmentDefItemsOffset)
+    local itemsBeforePtr = Memory.readdword(base + GameSettings.segmentDefItemsBeforeOffset)
+    local endLayout = Memory.readword(base + GameSettings.segmentDefEndLayoutOffset)
 
     local name = Utils.readString(namePtr)
     local routes = readWordList(routesPtr, LIST_END, 128) or {}
@@ -913,7 +902,8 @@ function self.buildData(forced)
     end
     local entrySize = GameSettings.segmentDefEntrySize
     if not entrySize or entrySize == 0 then
-        entrySize = resolveEntrySize(GameSettings.segmentDefNameOffset)
+        Utils.printDebug("[WARN] SegmentManager: missing segmentDefEntrySize")
+        return
     end
     local count = GameSettings.segmentDefsCount
     if not count or count == 0 then
@@ -928,7 +918,7 @@ function self.buildData(forced)
 
     for segId = 0, count - 1 do
         if self.SegmentsById[segId] == nil then
-            local seg = readSegmentDef(segId, GameSettings.segmentDefsAddr, entrySize, GameSettings.segmentDefNameOffset)
+            local seg = readSegmentDef(segId, GameSettings.segmentDefsAddr, entrySize)
             if seg then
                 self.SegmentsById[seg.id] = seg
                 if seg.name and seg.name ~= "" then
@@ -941,6 +931,112 @@ function self.buildData(forced)
 
     -- Initialize callbacks on first build
     self.initCallbacks()
+end
+
+--- Asks the ROM to resolve every segment's item flags in one pass. Needed by
+--- the item-name search, which has to match segments the player has never
+--- opened.
+function self.requestAllItemIds()
+    local cmdManager = Roguemon.TrackerCommandManager
+    if not cmdManager then
+        return
+    end
+    cmdManager.requestLogItemQuery()
+end
+
+--- Item ids for every segment, keyed by segment id, sliced out of the ROM's
+--- concatenated answer using the flag lists already read from the segment defs.
+--- Returns nil until the ROM has answered.
+function self.readAllItemIds()
+    local base = GameSettings.roguemonTrackerDataAddr
+    if not base or base == 0 then
+        return nil
+    end
+    local total = Memory.readword(base + GameSettings.roguemonTrackerLogAllItemCountOffset)
+    if not total or total == 0 then
+        return nil
+    end
+
+    local addr = base + GameSettings.roguemonTrackerLogAllItemIdsOffset
+    local bySegment = {}
+    local cursor = 0
+    -- Same order the ROM wrote: segments ascending, each one's items ahead of
+    -- its itemsBefore.
+    for segId = 0, (GameSettings.segmentDefsCount or 64) - 1 do
+        local seg = self.SegmentsById[segId]
+        if seg then
+            local ids = {}
+            for _ = 1, #(seg.items or {}) + #(seg.itemsBefore or {}) do
+                if cursor >= total then
+                    break
+                end
+                ids[#ids + 1] = Memory.readword(addr + (cursor * 2))
+                cursor = cursor + 1
+            end
+            bySegment[segId] = ids
+        end
+    end
+    return bySegment
+end
+
+--- Asks the ROM to resolve one segment's item flags to item ids and to work out
+--- what prizes it offers. The answer lands in the published log-query block, so
+--- this only starts the work; readLogQuery picks it up once it arrives.
+function self.requestLogQuery(segId)
+    local cmdManager = Roguemon.TrackerCommandManager
+    if not cmdManager or segId == nil then
+        return
+    end
+    cmdManager.requestLogSegmentQuery(segId)
+end
+
+--- Reads the published log-query block, or nil when it does not yet describe
+--- `segId`. The ROM writes the segment id last, so a block that names the
+--- segment asked for is complete.
+function self.readLogQuery(segId)
+    local base = GameSettings.roguemonTrackerDataAddr
+    if not base or base == 0 then
+        return nil
+    end
+    if Memory.readbyte(base + GameSettings.roguemonTrackerLogQuerySegmentIdOffset) ~= segId then
+        return nil
+    end
+
+    local itemCount = Memory.readbyte(base + GameSettings.roguemonTrackerLogQueryItemCountOffset)
+    local itemsBeforeCount = Memory.readbyte(base + GameSettings.roguemonTrackerLogQueryItemsBeforeCountOffset)
+    local itemsAddr = base + GameSettings.roguemonTrackerLogQueryItemIdsOffset
+    local maxItems = GameSettings.roguemonLogQueryItemsMax or 0
+    local total = math.min(itemCount + itemsBeforeCount, maxItems)
+
+    local items = {}
+    for i = 0, total - 1 do
+        items[#items + 1] = {
+            itemId = Memory.readword(itemsAddr + (i * 2)),
+            -- The ROM lists the segment's own items first, then the ones on the
+            -- approach to it.
+            isBefore = (i >= itemCount),
+        }
+    end
+
+    local function readPrizeSet(countOffset, idsOffset)
+        local count = Memory.readbyte(base + countOffset)
+        local addr = base + idsOffset
+        local out = {}
+        for i = 0, count - 1 do
+            out[#out + 1] = Memory.readword(addr + (i * 2))
+        end
+        return out
+    end
+
+    return {
+        segmentId = segId,
+        seq = Memory.readbyte(base + GameSettings.roguemonTrackerLogQuerySeqOffset),
+        items = items,
+        prizeInitial = readPrizeSet(GameSettings.roguemonTrackerLogQueryPrizeInitialCountOffset,
+            GameSettings.roguemonTrackerLogQueryPrizeInitialOffset),
+        prizeReroll = readPrizeSet(GameSettings.roguemonTrackerLogQueryPrizeRerollCountOffset,
+            GameSettings.roguemonTrackerLogQueryPrizeRerollOffset),
+    }
 end
 
 function self.getRemainingItemCount()
@@ -979,6 +1075,18 @@ function self.getRemainingItemCount()
         local prevSeg = prevId and self.SegmentsById[prevId] or nil
         if prevSeg then
             total = total + countRemaining(prevSeg.items)
+        end
+    end
+
+    -- A3 rival merge pending: ROM defers MarkItemsCollected for the just-
+    -- completed segment, but currentIndex has already advanced past the
+    -- rival so prevId above lands on the rival (no items), not the
+    -- pre-rival segment. Surface the deferred items via lastCompletedId.
+    if Utils.bit_and(state.flags or 0, FLAG_A3_RIVAL_PENDING) ~= 0
+            and state.lastCompletedId ~= nil then
+        local lastSeg = self.SegmentsById[state.lastCompletedId]
+        if lastSeg then
+            total = total + countRemaining(lastSeg.items)
         end
     end
 
@@ -1022,6 +1130,17 @@ function self.getRemainingItems()
         if prevSeg then
             local prevItems = collectRemaining(prevSeg.items)
             for _, flag in ipairs(prevItems) do
+                result[#result + 1] = flag
+            end
+        end
+    end
+
+    if Utils.bit_and(state.flags or 0, FLAG_A3_RIVAL_PENDING) ~= 0
+            and state.lastCompletedId ~= nil then
+        local lastSeg = self.SegmentsById[state.lastCompletedId]
+        if lastSeg then
+            local lastItems = collectRemaining(lastSeg.items)
+            for _, flag in ipairs(lastItems) do
                 result[#result + 1] = flag
             end
         end

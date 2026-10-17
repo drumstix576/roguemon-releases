@@ -107,6 +107,30 @@ function self.isNotificationActive()
     return false
 end
 
+-- Notification types that should NOT be auto-cleared by the battle
+-- transition's trySwapScreenBackToMain. Item / move notifications
+-- intentionally stay clearable so the player can pop a stack of them by
+-- starting a fight; types added here will instead persist into the
+-- battle screen and require manual dismissal.
+local sNotificationsBlockingBattleSwap = {
+    curseInfo = true,
+}
+
+function self.isNotificationBlockingBattleSwap()
+    if not self.activeNotification then
+        return false
+    end
+    if not sNotificationsBlockingBattleSwap[self.activeNotification.type] then
+        return false
+    end
+    return self.isNotificationActive()
+end
+
+function self.setNotificationBlocksBattleSwap(notificationType, blocks)
+    if type(notificationType) ~= "string" then return end
+    sNotificationsBlockingBattleSwap[notificationType] = blocks and true or nil
+end
+
 function self.showNotificationEntry(entry)
     self.activeNotification = entry
     if entry.type == "notification" then
