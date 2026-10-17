@@ -374,7 +374,7 @@ function self.showByPokemon()
         local ascIdx = tonumber(ascText)
         if not speciesId or not ascIdx then return end
 
-        local numSpecies = GameSettings.gNumSpecies or 1550
+        local numSpecies = GameSettings.pokemonStatsSpeciesCap
         local flatIndex = (ascIdx - 1) * numSpecies + speciesId
         local stats = readStats(GameSettings.pokemonStatsOffset, flatIndex)
         forms.settext(attemptsBox, tostring(stats.attempts))
@@ -390,7 +390,7 @@ function self.showByPokemon()
         local ascIdx = tonumber(ascText)
         if not speciesId or not ascIdx then return end
 
-        local numSpecies = GameSettings.gNumSpecies or 1550
+        local numSpecies = GameSettings.pokemonStatsSpeciesCap
         local flatIndex = (ascIdx - 1) * numSpecies + speciesId
         local stats = {
             attempts = tonumber(forms.gettext(attemptsBox)) or 0,
