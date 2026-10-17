@@ -138,10 +138,12 @@ function self.readLevelUpMoves(pokemonID, isMoveLvls)
                 table.insert(learnedMoves, level)
             end
         else
-            -- Full move list: include everything, normalizing level 0 to 1
+            -- Full move list: include everything. Level 0 marks an evolution
+            -- move; keep it as-is so callers can apply the same rule the ROM
+            -- does in GiveBoxMonInitialMoveset.
             table.insert(learnedMoves, {
                 id = move,
-                level = level == 0 and 1 or level,
+                level = level,
             })
         end
     end
@@ -208,6 +210,10 @@ function self.readSpeciesInfoBuf(buf, id)
     local formFlagsOffset = GameSettings.speciesFormFlagsOffset
     local speciesFlags = formFlagsOffset and d(buf, start + formFlagsOffset) or 0
     local isCosmetic = (speciesFlags & (1 << 21)) ~= 0
+    -- Totem formes (bit 4) are battle-trial variants the randomizer bans from every
+    -- spawn pool (RoguemonRomHandler totemPokemon), so they can never be encountered
+    -- in a run. They aren't cosmetic-flagged, so exclude them explicitly downstream.
+    local isTotem = (speciesFlags & (1 << 4)) ~= 0
 
     return {
         pokemonID = id,
@@ -228,6 +234,7 @@ function self.readSpeciesInfoBuf(buf, id)
         weight = weight,
         natDexNum = natDexNum,
         isCosmetic = isCosmetic,
+        isTotem = isTotem,
     }
 end
 

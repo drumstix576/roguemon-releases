@@ -103,7 +103,29 @@ function self.LoadNextRom()
     local settingsFile = self.getSettingsFilePath(ascension, runType)
     Options.FILES["Settings File"] = settingsFile
 
+    -- Head-to-head manual seed: if a seed was armed via startManualSeedRun, force
+    -- it into this randomization. Main.GenerateNextRom() builds the randomizer CLI
+    -- command with no seed argument and lives in read-only core, so splice
+    -- "--seed N" onto the randomizer command by wrapping tryOsExecute for this
+    -- one call. The armed value lives in _G so it survives the Main.Run restart
+    -- between arming (at the tower) and this randomization.
+    local manualSeed = _G.__roguemonPendingManualSeed
+    _G.__roguemonPendingManualSeed = nil
+    local restoreOsExecute
+    if manualSeed ~= nil then
+        Utils.printDebug("[Run] Applying manual seed: %d", manualSeed)
+        local originalOsExecute = FileManager.tryOsExecute
+        restoreOsExecute = function() FileManager.tryOsExecute = originalOsExecute end
+        FileManager.tryOsExecute = function(command, ...)
+            if type(command) == "string" and command:find("-jar", 1, true) and command:find(" cli ", 1, true) then
+                command = string.format("%s --seed %d", command, manualSeed)
+            end
+            return originalOsExecute(command, ...)
+        end
+    end
+
     local nextRomInfo = Main.GenerateNextRom()
+    if restoreOsExecute then restoreOsExecute() end
     -- Randomization failed; mark randomization complete so we're not stuck waiting
     if nextRomInfo == nil then
         self.markRandomizationComplete()
@@ -150,10 +172,61 @@ function self.LoadNextRom()
     end
 
     Utils.tempEnableBizhawkSound()
-    diagBeforeRun("randomization fallback")
+    diagBeforeMainRun("randomization fallback")
     Main.Run()
 end
 
+
+-- TYPE_MYSTERY (0x0A) is the type index the ROM stores for Typeless runs. It can't
+-- be recovered by inverting TypeIndexMap (0x00/0x0A/0x14 all map to "unknown"), so
+-- it is handled explicitly; concrete types invert TypeIndexMap (the table
+-- getAscensionString already trusts).
+local TYPE_MYSTERY_INDEX = 0x0A
+
+local function typeNameToRomIndex(typeName)
+    if typeName == "typeless" then return TYPE_MYSTERY_INDEX end
+    for idx, name in pairs(PokemonData.TypeIndexMap) do
+        if name == typeName then return idx end
+    end
+    return nil
+end
+
+-- Re-stamp SaveBlock3's "last run" (ascension + type) so the back-to-tower
+-- white-out respawns the player in front of the SELECTED run's tile rather than
+-- the one they just ended. lastType (bits 0-4) + lastAscension (bits 5-7) share a
+-- byte at lastTypeBitfieldOffset, packed exactly as the ROM does in
+-- CB2_Randomizing (lastType = type index). lastFromRandom is cleared so the
+-- respawn targets the type tile even if the prior run came from the Random tile.
+-- NewGameInitData preserves all three across the reset, so WarpToAscensionTower
+-- lands the player on the matching tile.
+function self.stampRespawnRun(ascension, typeName)
+    local typeIndex = typeNameToRomIndex(typeName)
+    local sb3 = Roguemon.Core.Utils.getSaveBlock3Addr()
+    local packed = (typeIndex & 0x1F) | ((ascension & 0x07) << 5)
+    Memory.writebyte(sb3 + GameSettings.lastTypeBitfieldOffset, packed)
+    Memory.writebyte(sb3 + GameSettings.lastFromRandomOffset, 0)
+end
+
+-- Head-to-head "manual seed" launch (assisted model; see SeedShare). Arms the
+-- chosen seed for the next ROM-requested randomization, re-stamps the respawn
+-- tile to the selected run, then runs the manual new-run path (sendPlayerToTower
+-- + Main.Run) so the player is sent to the tower in front of the selected tile
+-- and interacts with it to start. The armed seed is stored in _G because the
+-- Main.Run restart rebuilds this module table; _G persists across it (same
+-- pattern as the sound-state restore).
+function self.startManualSeedRun(ascension, typeName, seed)
+    _G.__roguemonPendingManualSeed = seed
+    self.stampRespawnRun(ascension, typeName)
+    Utils.printDebug("[Run] Manual seed armed (A%d %s seed=%d)", ascension, tostring(typeName), seed)
+    -- Drive the manual new-run path through the core main loop rather than
+    -- calling LoadNextRom/Main.Run here: the loop calls Main.LoadNextRom when
+    -- loadNextSeed is set (Main.lua), and watchTriggered=false selects the
+    -- sendPlayerToTower reset branch. This is the same top-level mechanism the
+    -- ROM-driven randomization uses (WatchManager.onAwaitRandomization), so we
+    -- never re-enter Main.Run from a form callback.
+    self.watchTriggered = false
+    Main.loadNextSeed = true
+end
 
 function self.getAscensionString(ascension, typeIndex)
     local typeName = PokemonData.TypeIndexMap[typeIndex]
@@ -196,10 +269,8 @@ function self.stampRomFile(romFilePath, ascension, runType)
 end
 
 local SPLIT_PROFILE_ID = "8cca5a43-967c-469a-858b-123456789abc"
-local CLASSIC_PROFILE_ID   = "8cca5a43-967c-469a-858b-000000000001"
-local TRACKER_ACTION_SWITCH_PROFILE = 4
 
--- Manages static run profiles for RogueMon Split and Classic.
+-- Manages the static RogueMon Split run profile.
 -- Actions are idempotent.
 function self.setupRunProfile()
     local ext = Roguemon
@@ -210,11 +281,10 @@ function self.setupRunProfile()
     Options.FILES["Randomizer JAR"]   = ext.Paths.RANDOMIZER_JAR
     Options.FILES["Source ROM"]       = ext.getSourceRomPath()
 
-    local isClassic = ext.isClassicProfile()
-    -- Per-profile subdirectories ship with the extension (kept via .gitkeep);
+    -- The generated subdirectories ship with the extension (kept via .gitkeep);
     -- skip FileManager.createFolder so we don't pay an OS spawn per startup.
-    Options.Overrides["ROMs and Logs"] = ext.getGeneratedRomsDir(isClassic)
-    Options.Overrides["Attempt Counts"] = ext.getGeneratedAttemptsDir(isClassic)
+    Options.Overrides["ROMs and Logs"] = ext.getGeneratedRomsDir()
+    Options.Overrides["Attempt Counts"] = ext.getGeneratedAttemptsDir()
 
     local splitProfile = QuickloadScreen.IProfile:new({
         Name = "RogueMon Split",
@@ -228,75 +298,18 @@ function self.setupRunProfile()
         }
     })
 
-    local classicProfile = QuickloadScreen.IProfile:new({
-        Name = "RogueMon Classic",
-        Mode = "Generate",
-        GameVersion = "firered",
-        GameOverCondition = Options["Game Over condition"],
-        GUID = CLASSIC_PROFILE_ID,
-        Paths = {
-            Rom = ext.Paths.ROGUEMON_CLASSIC_UNRAND_ROM,
-            Jar = Options.FILES["Randomizer JAR"],
-        }
-    })
-
     if ascension > 0 then
         local settingsFile = self.getSettingsFilePath(ascension, typeIndex)
         Options.FILES["Settings File"] = settingsFile
         splitProfile.Paths.Settings = settingsFile
-        classicProfile.Paths.Settings = settingsFile
     end
 
-    QuickloadScreen.addUpdateProfile(splitProfile, not isClassic)
-    QuickloadScreen.addUpdateProfile(classicProfile, isClassic)
+    QuickloadScreen.addUpdateProfile(splitProfile, true)
 
-    -- Restore BizHawk master sound after a mode switch or ROM patch.
+    -- Restore BizHawk master sound after a ROM patch.
     -- Sound is disabled before client.openrom() and the full tracker restart
     -- wipes Utils.wasSoundOn. The sound state is persisted to a flag file.
     self.restoreSoundState()
-end
-
-function self.registerTrackerActions(actionManager)
-    if not actionManager or not actionManager.registerHandler then return end
-
-    actionManager.registerHandler(TRACKER_ACTION_SWITCH_PROFILE, function(arg)
-        local ext = Roguemon
-        local isCurrentlyClassic = ext.isClassicProfile()
-
-        -- Target the OTHER profile's active ROM
-        local targetRom = isCurrentlyClassic
-            and ext.Paths.ROGUEMON_ROM
-            or ext.Paths.ROGUEMON_CLASSIC_ROM
-
-        -- Persist sound state to a flag file before the full tracker restart
-        -- (Main.Run() wipes Utils.wasSoundOn; ROM stamping used the wrong
-        -- config address for the target ROM).
-        self.saveSoundState()
-
-        -- Mark a clean exit so the crash recovery screen doesn't trigger on the new ROM
-        CrashRecoveryScreen.logCrashReport(false)
-
-        -- Tear down extension state before loading the new ROM.
-        -- Core tracker functions were monkey-patched by overrideCoreTrackerFunctions()
-        -- and use RogueMon-specific GameSettings addresses (gSpeciesInfo, gMovesInfo,
-        -- etc.) that are only valid for the CURRENT ROM. If we don't restore them,
-        -- Main.Run() → FileManager.executeEachFile("initialize") calls the overridden
-        -- buildData/readMoveInfoFromMemory/etc. with stale addresses from the old ROM,
-        -- producing "attempted read outside memory size" warnings.
-        ext.OverrideManager.restoreCoreTrackerFunctions()
-        ext.UpdateManager.shutdown()
-        ext.WatchManager.unregisterCb2Watch()
-        ext.WatchManager.unregisterMapWatch()
-        ext.WatchManager.unregisterFieldWatch()
-        ext.WatchManager.unregisterPartyWatch()
-        ext.WatchManager.unregisterDma3DiagWatch()
-
-        -- Load the other ROM immediately (no savestate save/restore)
-        client.SetSoundOn(false)
-        client.openrom(targetRom)
-        diagBeforeMainRun("profile switch")
-        Main.Run()
-    end)
 end
 
 function self.getRomStamp()

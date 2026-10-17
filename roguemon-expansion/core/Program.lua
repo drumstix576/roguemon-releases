@@ -183,6 +183,74 @@ local function calculateMaxPP(moveId, ppBonuses, moveIndex)
     return basePP + math.floor((basePP * bonus) / 5)
 end
 
+-- Sharing is Caring trades moves in and out of gBattleMons for the length of a
+-- battle; the party struct still holds the mon's own moves. Returns the battler
+-- holding this party slot, or nil when the mon is not on the field.
+local function findBattlerForPartySlot(partyIndex, isEnemy)
+    if not (GameSettings.gBattlerPartyIndexes and Battle.inActiveBattle()) then
+        return nil
+    end
+
+    local numBattlers = Battle.numBattlers or 2
+    for battler = 0, numBattlers - 1 do
+        local battlerIsEnemy = (battler % 2) == 1
+        if battlerIsEnemy == isEnemy then
+            if Memory.readword(GameSettings.gBattlerPartyIndexes + battler * 2) == partyIndex then
+                return battler
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Reads the moves a battler currently holds over the ones its party entry
+-- knows, so the tracker shows what the player can actually pick this turn.
+local function applyTradedMoves(pokemon, startAddress, personality)
+    local CurseManager = Roguemon and Roguemon.CurseManager
+    if not (CurseManager and CurseManager.CurseId
+        and CurseManager.getActiveCurseId() == CurseManager.CurseId.SHARING_IS_CARING) then
+        return
+    end
+    if not (GameSettings.gBattleMons and GameSettings.battleMonMovesOffset and GameSettings.battleMonPpOffset) then
+        return
+    end
+
+    -- gEnemyParty sits below gPlayerParty in memory, so the side has to be
+    -- decided by which party's range the address falls in, not by comparing
+    -- against one base.
+    local partyBytes = GameSettings.sizeofPokemon * 6
+    local isEnemy, base
+    if startAddress >= GameSettings.pstats and startAddress < GameSettings.pstats + partyBytes then
+        isEnemy, base = false, GameSettings.pstats
+    elseif startAddress >= GameSettings.estats and startAddress < GameSettings.estats + partyBytes then
+        isEnemy, base = true, GameSettings.estats
+    else
+        return
+    end
+
+    local partyIndex = math.floor((startAddress - base) / GameSettings.sizeofPokemon)
+    local battler = findBattlerForPartySlot(partyIndex, isEnemy)
+    if not battler then
+        return
+    end
+
+    local monAddress = GameSettings.gBattleMons + battler * GameSettings.sizeofBattlePokemon
+    for idx = 1, 4 do
+        local moveId = Memory.readword(monAddress + GameSettings.battleMonMovesOffset + (idx - 1) * 2)
+        local move = pokemon.moves[idx]
+        if move and moveId ~= move.id then
+            local moveData = MoveData.Moves[moveId] or {}
+            move.id = moveId
+            move.name = moveData.name
+            move.summary = moveData.summary
+        end
+        if move then
+            move.pp = Memory.readbyte(monAddress + GameSettings.battleMonPpOffset + (idx - 1))
+        end
+    end
+end
+
 local function refreshPokemonDynamicFields(pokemon, startAddress, personality, otid)
     if not pokemon or not startAddress or not personality or not otid then
         return
@@ -265,6 +333,8 @@ local function refreshPokemonDynamicFields(pokemon, startAddress, personality, o
         pokemon.moves[idx] = move
     end
 
+    applyTradedMoves(pokemon, startAddress, personality)
+
     pokemon.evs = {
         hp = Utils.getbits(effort1, 0, 8),
         atk = Utils.getbits(effort1, 8, 8),
@@ -312,7 +382,7 @@ function self.readNewPokemon(startAddress, personality)
     local p2 = personality % 65536
     local shinyValue = Utils.bit_xor(Utils.bit_xor(Utils.bit_xor(trainerID, secretID), p1), p2)
     local shinyModifier = Utils.getbits(w(buf, 0x1E), 14, 1)
-    local isShiny = (shinyValue < Program.Values.ShinyOdds) ~= (shinyModifier == 1)
+    local isShiny = (shinyValue < GameSettings.shinyOdds) ~= (shinyModifier == 1)
 
     local m1 = MoveData.Moves[moveIds[1]] or {}
     local m2 = MoveData.Moves[moveIds[2]] or {}

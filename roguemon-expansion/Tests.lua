@@ -13,9 +13,11 @@ local TEST_MODULES = {
     "Template",
     "Api",
     "RunManager",
+    "SeedShare",
     "WatchManager",
     "OverrideManager",
     "SegmentManager",
+    "SegmentUI",
     "ReminderManager",
     "ItemManager",
     "PrizeManager",
@@ -28,6 +30,8 @@ local TEST_MODULES = {
     "LogVerify",
     "ShopScreen",
     "DataHelper",
+    "Pickle",
+    "Leaderboard",
 }
 
 -- Wrap a test function so that asserts inside it (and inside functions it calls)

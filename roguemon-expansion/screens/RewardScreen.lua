@@ -128,7 +128,7 @@ local function getOptionDesc(def, optionIndex, state)
             local move = MoveData and MoveData.Moves and MoveData.Moves[state.starterPackMoveId] or nil
             local moveName = (move and move.name) or string.format("Move %d", state.starterPackMoveId)
             local categoryLabel = ""
-            if move and move.category and not (Roguemon and Roguemon.isClassicProfile and Roguemon.isClassicProfile()) then
+            if move and move.category then
                 if move.category == MoveData.Categories.PHYSICAL then
                     categoryLabel = "physical "
                 elseif move.category == MoveData.Categories.SPECIAL then

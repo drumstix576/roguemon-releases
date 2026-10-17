@@ -6,26 +6,30 @@
 --   skipBuyPhase     → segDef->flags & SKIP_CLEANSING
 -- This manager is a thin wrapper over those caches; it never reads ROM directly.
 --
--- Auto-open reach conditions (audited 2026-05-02):
---   ROGUEMON_TRACKER_ACTION_OPEN_SHOP raises from two ROM sites:
---   1. RoguemonPrizes_UsePopupShop (roguemon_prizes.c) — Popup Shop item use.
---      Mid-segment, no checklist. handleTrackerAction → queueShopOpen is the
---      only path that opens the shop here. LOAD-BEARING.
---   2. FLOW_SHOP (roguemon_prizes.c) — post-prize-flow.
+-- Shop-open routing (updated 2026-07-30):
+--   ROGUEMON_TRACKER_ACTION_OPEN_SHOP_VOUCHER — Pop-up Shop voucher use
+--     (RoguemonPrizes_UsePopupShop). Explicit mid-segment user request:
+--     handleShopVoucher opens a shop directly (openShopScreen with the voucher
+--     marker) and never routes through the skip-cleansing or checklist
+--     branches. Closing a voucher shop does not advance the end-of-segment
+--     checklist (finishShopPhase early-returns on the marker). If a shop commit
+--     is already in flight the voucher is refunded rather than clobbering it.
+--   ROGUEMON_TRACKER_ACTION_OPEN_SHOP — post-prize-flow (FLOW_SHOP):
 --      - For HAS_SHOP+CLEANSING segments (Brock..Giovanni except Blaine,
 --        Victory Road): isChecklistActive is true; ChecklistScreen takes over
 --        and the SHOP row's click is what opens the shop. The OPEN_SHOP raise
 --        is effectively a no-op (early-return on isChecklistActive).
 --      - For SKIP_CLEANSING segments (Blaine, Silph Co): segmentSkipsBuyPhase
 --        is true; onPrizeQueueResolved → queueShopOpen. LOAD-BEARING.
---   Conclusion: keep the auto-open machinery. Removing it would break Popup
---   Shop and SKIP_CLEANSING shop transitions.
+--   Conclusion: keep the auto-open machinery. Removing it would break the
+--   post-prize-flow SKIP_CLEANSING shop transition.
 local self = {
     autoOpenLabel = "Roguemon:ShopAutoOpen",
     checklistAutoOpenLabel = "Roguemon:ChecklistAutoOpen",
 }
 
 local TRACKER_ACTION_OPEN_SHOP = 1
+local TRACKER_ACTION_OPEN_SHOP_VOUCHER = 12
 local TRACKER_ACTION_CLEANSING_REMINDER = 6
 local TRACKER_ACTION_PRIZE_REMINDER = 7
 local TRACKER_ACTION_SHOW_CHECKLIST = 10
@@ -85,10 +89,42 @@ function self.handleTrackerAction(action, arg)
         Roguemon.Screens.ChecklistScreen.show()
         return true
     end
-    -- Mid-segment Popup Shop voucher: explicit user request, open directly.
-    -- The auto-open gates (prize-flow idle, queue empty, etc.) only apply to
-    -- the post-prize-flow deferred path that comes through onPrizeQueueResolved.
+    -- Fallthrough for an OPEN_SHOP that is neither a SKIP_CLEANSING segment nor
+    -- an active checklist. Post-prize-flow FLOW_SHOP always matches one of the
+    -- branches above; the Pop-up Shop voucher now uses its own action
+    -- (ROGUEMON_TRACKER_ACTION_OPEN_SHOP_VOUCHER -> handleShopVoucher). Open
+    -- directly if some other OPEN_SHOP raise ever reaches here.
     self.openShopScreen()
+    return true
+end
+
+-- The ROM already consumed the voucher before raising the action. If we cannot
+-- present a shop, refund it via the canonical ROM grant command so it is not
+-- lost. getItemIdByName returns nil only for an unknown name (fixed here), so a
+-- nil id is a real error worth surfacing, not a silent skip.
+local function refundPopupShopVoucher()
+    local itemId = Roguemon.ItemManager.getItemIdByName("Pop-up Shop")
+    if not itemId then
+        Utils.printDebug("[BuyPhase] Pop-up Shop refund skipped: item id unresolved")
+        return
+    end
+    Roguemon.TrackerCommandManager.enqueueCommand(
+        Roguemon.TrackerCommandManager.Commands.GRANT_ITEM, itemId, 1, 0)
+end
+
+-- Pop-up Shop voucher (ROGUEMON_TRACKER_ACTION_OPEN_SHOP_VOUCHER). Explicit user
+-- request: always open a shop directly, bypassing the skip-cleansing and
+-- checklist routing that handleTrackerAction applies to OPEN_SHOP. The shop is
+-- marked voucher-opened so closing it does not advance the end-of-segment
+-- checklist (see finishShopPhase).
+function self.handleShopVoucher()
+    if Roguemon.Screens.ShopScreen.committing then
+        -- A shop commit is mid-flight; opening now would clobber it. Refund the
+        -- consumed voucher so the player can use it once the commit settles.
+        refundPopupShopVoucher()
+        return true
+    end
+    self.openShopScreen(true)
     return true
 end
 
@@ -104,11 +140,14 @@ function self.onPrizeQueueResolved(segId)
     return true
 end
 
-function self.openShopScreen()
+function self.openShopScreen(openedByVoucher)
     Roguemon.ScreenManager.previousScreen = Program.currentScreen
     Program.updateBagItems()
     local screen = Roguemon.Screens.ShopScreen
     if not screen.isActive then
+        -- Stamp the marker only when a fresh shop is begun, so re-focusing an
+        -- already-open (non-voucher) shop never gets mislabelled as a voucher.
+        screen.openedByVoucher = openedByVoucher == true
         screen.beginShop()
     end
     Roguemon.ScreenManager.currentScreen = screen
@@ -191,6 +230,12 @@ end
 
 function self.finishShopPhase()
     Program.removeFrameCounter(self.autoOpenLabel)
+    if Roguemon.Screens.ShopScreen.openedByVoucher then
+        -- A Pop-up Shop voucher shop is ad-hoc. Closing it must not advance the
+        -- end-of-segment checklist; that advance is what surfaced the Cleansing
+        -- screen when a voucher shop was closed during the checklist window.
+        return false
+    end
     if isChecklistActive() then
         Roguemon.TrackerCommandManager.enqueueCommand(
             Roguemon.TrackerCommandManager.Commands.CHECKLIST_STEP,
@@ -238,6 +283,9 @@ function self.registerTrackerActions(actionManager)
     actionManager.registerHandler(TRACKER_ACTION_OPEN_SHOP, function(arg)
         self.handleTrackerAction(TRACKER_ACTION_OPEN_SHOP, arg)
     end)
+    actionManager.registerHandler(TRACKER_ACTION_OPEN_SHOP_VOUCHER, function()
+        self.handleShopVoucher()
+    end)
     actionManager.registerHandler(TRACKER_ACTION_CLEANSING_REMINDER, function()
         -- The player progresses through post-segment work via the checklist.
         -- Any pending state routes through ChecklistScreen so the user picks
@@ -252,6 +300,13 @@ function self.registerTrackerActions(actionManager)
         Roguemon.PrizeManager.openQueueScreen()
     end)
     actionManager.registerHandler(TRACKER_ACTION_SHOW_CHECKLIST, function(arg)
+        -- The ROM raises this from field/UI hooks (gym leader, gym exit, gym
+        -- guy, TM Case exit) that may fire outside the checklist window. Ignore
+        -- with a debug note rather than popping an empty checklist screen.
+        if not self.isChecklistPending() then
+            Utils.printDebug("[Checklist] SHOW_CHECKLIST raised with no checklist pending; ignoring")
+            return
+        end
         Roguemon.Screens.ChecklistScreen.show()
     end)
 end

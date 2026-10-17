@@ -3,6 +3,7 @@ local self = {
         outcome_watch_name = "roguemon_watch_gBattleOutcome",
         turn_watch_name    = "roguemon_watch_CurrentTurn",
         party_watch_name   = "roguemon_watch_BattleParties",
+        party_right_watch_name = "roguemon_watch_BattleParties_Right",
         mainfunc_watch_name = "roguemon_watch_gBattleMainFunc",
         battlers_count_watch_name = "roguemon_watch_gBattlersCount",
         -- tracker_event watch lives in WatchManager (permanent, not battle-scoped).
@@ -138,11 +139,20 @@ revealEnemy = function(slot, mon, battleFlags)
     self.revealedSlots[slot] = true
 end
 
+-- Battler 3 is the right-hand opponent, which exists only in doubles. In singles the
+-- ROM still writes that entry during battle init, and revealing from a stale index
+-- would show a benched mon. Checked when the reveal is PROCESSED rather than when the
+-- watch fires: gBattlersCount is written after CB2_InitBattle, so Battle.numBattlers is
+-- not yet trustworthy at fire time (same reason beginBattle does not read it).
+local function revealAllowed(battler)
+    return battler ~= 3 or Battle.numBattlers == 4
+end
+
 processPendingReveals = function()
     for _, pending in ipairs(self.pendingReveals) do
         local alreadySeen = self.revealedSlots[pending.slot]
             or (Battle.BattleParties[1][pending.slot] and Battle.BattleParties[1][pending.slot].seenAlready)
-        if not alreadySeen then
+        if not alreadySeen and revealAllowed(pending.battler) then
             local mon = Tracker.getPokemon(pending.slot, false)
             if mon then
                 revealEnemy(pending.slot, mon, pending.battleFlags)
@@ -152,7 +162,7 @@ processPendingReveals = function()
     self.pendingReveals = {}
 end
 
-local function onPartySwitch(battlerOffset)
+local function onPartySwitch(battler)
     return function(_, value, _)
         local slot = (value or 0) + 1
         local battleFlags = Memory.readdword(GameSettings.gBattleTypeFlags)
@@ -166,9 +176,11 @@ local function onPartySwitch(battlerOffset)
         -- Before dataReady, enemy data may not be populated yet.
         -- Queue the reveal; update() or onTurnAdvance will process it once data is available.
         if not Battle.dataReady then
-            table.insert(self.pendingReveals, { slot = slot, battleFlags = battleFlags })
+            table.insert(self.pendingReveals, { slot = slot, battleFlags = battleFlags, battler = battler })
             return
         end
+
+        if not revealAllowed(battler) then return end
 
         local mon = Tracker.getPokemon(slot, false)
         if not mon then return end
@@ -231,6 +243,10 @@ local RGMN_EVT_MOVE_LEARNED         = 10
 -- GameSettings.leaderboardEventBeaconAddr) — written before the seqno bump
 -- so the tracker reads coherent state.
 local RGMN_EVT_LEADERBOARD          = 11
+-- Sharing is Caring handed a move from one battler to another. Payload matches
+-- MOVE_USED: the giver's species and the move. The ROM only emits it for a move
+-- in the giver's party entry, so a move it was handed reveals nothing.
+local RGMN_EVT_MOVE_REVEALED        = 12
 
 -- Flag bit index -> name lookup. Mirrors rom/include/constants/battle_ai.h.
 -- Used to make SCORE_DELTA and BEGIN output readable. Missing bits fall back
@@ -347,10 +363,33 @@ end
 
 function self.onTrackerEvent(addr, value, size)
     local base = GameSettings.rgmnTrackerEventAddr
+    -- Seqlock + gap probe (TOCTOU diagnostics). seqno is read before AND after
+    -- the payload: if the ROM bumps it mid-read, the (mode, a, b) snapshot below
+    -- straddles two emits and is a torn record. seqno is also tracked across
+    -- calls to detect whether BizHawk coalesces/drops callbacks under load (a
+    -- forward jump > 1 means the consumer never saw the intervening emit(s)).
+    local seqBefore = Memory.readword(base + 6)
     local battler = Memory.readbyte(base + 1)
     local mode    = Memory.readbyte(base)
     local species = Memory.readword(base + 2)
     local val     = Memory.readword(base + 4)
+    local seqAfter = Memory.readword(base + 6)
+
+    -- Raw per-event trace. seqno makes every line unique, so printDebug's
+    -- consecutive-duplicate suppression can't hide repeated events (e.g. the
+    -- 5 STAT_CHANGED emits that all format to the same text).
+    Utils.printDebug("[TrackerEvent][raw] seq=%d mode=%d battler=%d a=%d b=%d",
+        seqBefore, mode, battler, species, val)
+    if seqBefore ~= seqAfter then
+        Utils.printDebug("[TrackerEvent][TORN] seqno %d->%d during read; snapshot mode=%d a=%d b=%d",
+            seqBefore, seqAfter, mode, species, val)
+    end
+    if self._lastTrackerSeq ~= nil and seqBefore > self._lastTrackerSeq
+       and seqBefore ~= self._lastTrackerSeq + 1 then
+        Utils.printDebug("[TrackerEvent][GAP] seqno %d -> %d (consumer missed %d emit(s))",
+            self._lastTrackerSeq, seqBefore, seqBefore - self._lastTrackerSeq - 1)
+    end
+    self._lastTrackerSeq = seqBefore
 
     -- MOVE_LEARNED fires outside battle too (Rare Candy, evolution-triggered
     -- learns), so it must run before the gBattleOutcome gate that filters
@@ -484,16 +523,25 @@ function self.onTrackerEvent(addr, value, size)
 
     if species == 0 or val <= 0 then return end
 
-    if mode == RGMN_EVT_MOVE_USED then
+    if mode == RGMN_EVT_MOVE_USED or mode == RGMN_EVT_MOVE_REVEALED then
         if val > #MoveData.Moves then return end
-        local partyIdx = Memory.readbyte(GameSettings.gBattlerPartyIndexes + battler) + 1
+        -- u16 per battler, so the offset is battler * 2. Reading + battler landed on
+        -- the high byte of an earlier battler's entry, which is 0 for any party index,
+        -- so every enemy move was attributed to enemy party slot 1.
+        local partyIdx = Memory.readbyte(GameSettings.gBattlerPartyIndexes + battler * 2) + 1
         local mon = Tracker.getPokemon(partyIdx, false)
         if not mon then return end
         -- Ensure MoveData.Values entry is populated and accurate.
         local moveName = MoveData.Moves[val].name
         MoveData.Values[moveName .. "Id"] = val
+        -- A revealed move is sitting in a traded slot right now, which is
+        -- exactly what trackerTrackMove drops, so the ROM's ruling is carried
+        -- past that filter.
+        self.recordingRevealedMove = (mode == RGMN_EVT_MOVE_REVEALED)
         trackMoveForLinkedForms(species, val, mon.level)
-        Utils.printDebug("[TrackerEvent] MOVE_USED species=%d move=%d level=%d", species, val, mon.level)
+        self.recordingRevealedMove = false
+        Utils.printDebug("[TrackerEvent] %s species=%d move=%d level=%d",
+            mode == RGMN_EVT_MOVE_REVEALED and "MOVE_REVEALED" or "MOVE_USED", species, val, mon.level)
     elseif mode == RGMN_EVT_ABILITY_REVEALED then
         if val > #AbilityData.Abilities then return end
         trackAbilityForLinkedForms(species, val)
@@ -503,6 +551,7 @@ end
 
 local function unregisterBattleWatches()
     event.unregisterbyname(self.watches.party_watch_name)
+    event.unregisterbyname(self.watches.party_right_watch_name)
     event.unregisterbyname(self.watches.turn_watch_name)
     event.unregisterbyname(self.watches.outcome_watch_name)
     event.unregisterbyname(self.watches.mainfunc_watch_name)
@@ -532,7 +581,11 @@ local function registerBattleWatches()
 
     local outcomeAddr = GameSettings.gBattleOutcome
     local turnAddr    = GameSettings.gBattleResults + GameSettings.offsetBattleResultsCurrentTurn
+    -- gBattlerPartyIndexes is u16 per battler: enemies are battler 1 (left, +2) and
+    -- battler 3 (right, +6). Watching only the left one left the right-hand doubles
+    -- opponent unrevealed, so nothing downstream of revealEnemy ever saw it.
     local partyAddr   = GameSettings.gBattlerPartyIndexes + 2
+    local partyRightAddr = GameSettings.gBattlerPartyIndexes + 6
 
     self.outcome_cache = Memory.readword(outcomeAddr)
     self.turn_cache = Memory.readword(turnAddr)
@@ -541,6 +594,7 @@ local function registerBattleWatches()
     event.onmemorywrite(onBattleOutcomeUpdate, outcomeAddr, self.watches.outcome_watch_name, "System Bus")
     event.onmemorywrite(onTurnAdvance, turnAddr, self.watches.turn_watch_name, "System Bus")
     event.onmemorywrite(onPartySwitch(1), partyAddr, self.watches.party_watch_name, "System Bus")
+    event.onmemorywrite(onPartySwitch(3), partyRightAddr, self.watches.party_right_watch_name, "System Bus")
 
     -- Watch gBattlersCount so Battle.numBattlers stays in sync with the ROM across the
     -- whole battle lifecycle. Seed from the current value in case the watch is registered
@@ -736,7 +790,14 @@ function self.beginNewBattle()
     Input.StatHighlighter:resetSelectedStat()
 
     Tracker.resetBattleNotes()
-    Battle.trySwapScreenBackToMain()
+    -- Some notification types (currently curseInfo, raised at the start
+    -- of a forward-merged rival fight) need to persist into the battle
+    -- screen. Item / move notifications stay clearable on purpose so
+    -- players can pop a stack by starting a fight.
+    local sm = Roguemon and Roguemon.ScreenManager
+    if not (sm and sm.isNotificationBlockingBattleSwap and sm.isNotificationBlockingBattleSwap()) then
+        Battle.trySwapScreenBackToMain()
+    end
 
     -- Don't clear the mon to show if it's waiting to be viewed
     local APO = AnimationManager.GachaMonAnims.PackOpening
@@ -956,6 +1017,46 @@ function self.trackerGetViewedPokemon()
         viewSlot = Utils.inlineIf(Battle.isViewingLeft, Battle.Combatants.LeftOther, Battle.Combatants.RightOther)
     end
     return Tracker.getPokemon(viewSlot, mustViewOwn)
+end
+
+-- Sharing is Caring: a move only on loan to a battler is not part of anything's
+-- learnset, so it is not recorded against either species. The ROM marks a
+-- traded slot in mimickedMoves, the same flag it uses for Mimic.
+local function isTradedMove(moveId)
+    local CurseManager = Roguemon and Roguemon.CurseManager
+    if not (CurseManager and CurseManager.CurseId
+        and CurseManager.getActiveCurseId() == CurseManager.CurseId.SHARING_IS_CARING) then
+        return false
+    end
+    if not (GameSettings.gDisableStructs and GameSettings.disableStructEntrySize
+        and GameSettings.mimickedMovesOffset and GameSettings.gBattleMons
+        and GameSettings.battleMonMovesOffset) then
+        return false
+    end
+
+    for battler = 0, (Battle.numBattlers or 2) - 1 do
+        local marked = Memory.readbyte(GameSettings.gDisableStructs
+            + battler * GameSettings.disableStructEntrySize + GameSettings.mimickedMovesOffset)
+        local monAddress = GameSettings.gBattleMons + battler * GameSettings.sizeofBattlePokemon
+        for slot = 0, 3 do
+            if marked & (1 << slot) ~= 0
+                and Memory.readword(monAddress + GameSettings.battleMonMovesOffset + slot * 2) == moveId then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function self.trackerTrackMove(pokemonID, moveId, level)
+    if not self.recordingRevealedMove and Battle.inActiveBattle() and isTradedMove(moveId) then
+        return
+    end
+    local original = _G.__roguemonCoreOriginals and _G.__roguemonCoreOriginals["Tracker.TrackMove"]
+    if original then
+        return original(pokemonID, moveId, level)
+    end
 end
 
 function self.updateTrackedInfo()

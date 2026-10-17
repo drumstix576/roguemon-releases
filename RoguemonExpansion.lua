@@ -39,51 +39,43 @@ local function RoguemonExpansionExtension()
     -- Build an absolute path to this extension's folder
     self.extensionDir = FileManager.prependDir("extensions" .. FileManager.slash .. "roguemon-expansion" .. FileManager.slash)
     self.version, self.github, self.url = loadVersionInfo(self.extensionDir)
+    -- Alpha channel in roguemon-ironmonextension, shared with Emerald (UpdateChecker).
+    self.releaseTagPrefix = ""
+    self.alphaBranch = "alpha"
     self.Paths = {
         ROGUEMON_ROM              = self.extensionDir .. "roguemon_split.gba",
         ROGUEMON_UNRAND_ROM       = self.extensionDir .. "roguemon_split_unrandomized.gba",
-        ROGUEMON_CLASSIC_ROM      = self.extensionDir .. "roguemon_classic.gba",
-        ROGUEMON_CLASSIC_UNRAND_ROM = self.extensionDir .. "roguemon_classic_unrandomized.gba",
         VANILLA_ROM               = self.extensionDir .. "vanilla.gba",
         DEBUG_LOG                 = self.extensionDir .. "roguemon_debug_log.txt",
         RANDOMIZING_STATE         = self.extensionDir .. "randomizing.State",
         RANDOMIZER_JAR            = self.extensionDir .. "randomizer.jar",
         PATCHER_JAR               = self.extensionDir .. "jbps.jar",
         ROM_BPS                   = self.extensionDir .. "roguemon_split.bps",
-        ROM_BPS_CLASSIC           = self.extensionDir .. "roguemon_classic.bps",
         IMAGES_DIRECTORY          = self.extensionDir .. "roguemon_images" .. FileManager.slash,
         GENERATED_DIR             = self.extensionDir .. "generated" .. FileManager.slash,
     }
     self.Paths.SAVED_OPTIONS = self.extensionDir .. "roguemon_options.tdat"
 
-    --- Returns the per-profile directory under generated/ that holds the
-    --- AutoRandomized ROM, its log, and the attempt-counts subfolder.
-    --- Defaults to the currently active profile when isClassic is nil.
-    function self.getGeneratedRomsDir(isClassic)
-        if isClassic == nil then isClassic = self.isClassicProfile() end
-        local sub = isClassic and "classic" or "split"
-        return self.Paths.GENERATED_DIR .. sub .. FileManager.slash
+    --- Returns the directory under generated/ that holds the AutoRandomized
+    --- ROM, its log, and the attempt-counts subfolder. It keeps the "split"
+    --- name from when a Classic profile existed, so players' attempt counts
+    --- stay where they are.
+    function self.getGeneratedRomsDir()
+        return self.Paths.GENERATED_DIR .. "split" .. FileManager.slash
     end
 
-    function self.getGeneratedAttemptsDir(isClassic)
-        return self.getGeneratedRomsDir(isClassic) .. "attempt-counts" .. FileManager.slash
+    function self.getGeneratedAttemptsDir()
+        return self.getGeneratedRomsDir() .. "attempt-counts" .. FileManager.slash
     end
 
-    --- Returns true if the currently loaded ROM is a Classic profile.
-    --- Checks the MODERN_MOVES flag (bit 2) in roguemonBuildProfile.
-    function self.isClassicProfile()
-        local profile = GameSettings and GameSettings.roguemonBuildProfile or 0
-        return (profile & 0x04) == 0  -- MODERN_MOVES flag absent
-    end
-
-    --- Returns the active ROM path based on detected profile.
+    --- Returns the active ROM path.
     function self.getActiveRomPath()
-        return self.isClassicProfile() and self.Paths.ROGUEMON_CLASSIC_ROM or self.Paths.ROGUEMON_ROM
+        return self.Paths.ROGUEMON_ROM
     end
 
-    --- Returns the source (unrandomized) ROM path based on detected profile.
+    --- Returns the source (unrandomized) ROM path.
     function self.getSourceRomPath()
-        return self.isClassicProfile() and self.Paths.ROGUEMON_CLASSIC_UNRAND_ROM or self.Paths.ROGUEMON_UNRAND_ROM
+        return self.Paths.ROGUEMON_UNRAND_ROM
     end
 
     -- Cache the pristine version of a monkey-patched field in
@@ -215,11 +207,17 @@ local function RoguemonExpansionExtension()
     self.Core.Drawing      = safeLoad(corePath .. "Drawing.lua")
     self.Core.BattleScreen = safeLoad(corePath .. "BattleDetailsScreen.lua")
     self.Core.TrackerAPI   = safeLoad(corePath .. "TrackerAPI.lua")
+    self.Core.Pickle       = safeLoad(corePath .. "Pickle.lua")
     self.Core.InfoScreen   = safeLoad(corePath .. "InfoScreen.lua")
     self.Core.TrackerScreen = safeLoad(corePath .. "TrackerScreen.lua")
     self.Core.CoverageCalcScreen = safeLoad(corePath .. "CoverageCalcScreen.lua")
     self.Core.StartupScreen = safeLoad(corePath .. "StartupScreen.lua")
     self.Core.LogTabPokemon = safeLoad(corePath .. "LogTabPokemon.lua")
+    -- Both tab modules define globals the LogOverlay override registers, so
+    -- they have to load before it.
+    self.Core.LogTabRoguemon = safeLoad(self.extensionDir .. "screens" .. FileManager.slash .. "LogTabRoguemon.lua")
+    self.Core.LogTabRoguemonDetails = safeLoad(self.extensionDir .. "screens" .. FileManager.slash .. "LogTabRoguemonDetails.lua")
+    self.Core.LogOverlay   = safeLoad(corePath .. "LogOverlay.lua")
     self.Core.HealsInBagScreen = safeLoad(corePath .. "HealsInBagScreen.lua")
     self.Core.NotebookPokemonSeen = safeLoad(corePath .. "NotebookPokemonSeen.lua")
     self.Core.NotebookIndexScreen = safeLoad(corePath .. "NotebookIndexScreen.lua")
@@ -261,6 +259,7 @@ local function RoguemonExpansionExtension()
     self.BallMasterManager = safeLoad(managersPath .. "BallMasterManager.lua")
     self.OptionsManager    = safeLoad(managersPath .. "OptionsManager.lua")
     self.StatsEditor       = safeLoad(managersPath .. "StatsEditor.lua")
+    self.SeedShare         = safeLoad(managersPath .. "SeedShare.lua")
     self.UpdateChecker     = safeLoad(managersPath .. "UpdateChecker.lua")
 
     -- ROM patching (vanilla FireRed detection + BPS apply)
@@ -300,6 +299,7 @@ local function RoguemonExpansionExtension()
         ClairvoyanceOverviewScreen = "ClairvoyanceOverviewScreen.lua",
         ClairvoyanceSwapScreen = "ClairvoyanceSwapScreen.lua",
         RoguemonOptionsScreen = "RoguemonOptionsScreen.lua",
+        ManualSeedScreen = "ManualSeedScreen.lua",
         PrizePoolScreen = "PrizePoolScreen.lua",
         SegmentProgressScreen = "SegmentProgressScreen.lua",
         BstEvoInfoScreen = "BstEvoInfoScreen.lua",
@@ -480,6 +480,10 @@ local function RoguemonExpansionExtension()
         xpcall(self.startupInternal, self.exitGracefully)
     end
 
+    function self.inputCheckBizhawk()
+        self.SegmentUI.checkRemainingShortcut()
+    end
+
     function self.afterRedraw()
         -- Show persistent error if config validation failed
         if self.configError then
@@ -611,6 +615,12 @@ local function RoguemonExpansionExtension()
             CoverageCalcScreen.createButtons()
         end
 
+        -- Same story for the Log Viewer's tab strip: initialize() measured it
+        -- with the Pokemon tab at two icons and without the RogueMon tab.
+        if self.Core.LogOverlay and self.Core.LogOverlay.rebuildTabStrip then
+            self.Core.LogOverlay.rebuildTabStrip()
+        end
+
         -- Use 0.png (custom question mark sprite) instead of 252.png (Treecko in
         -- expansion ROM) for unknown Pokemon on route info screens
         PokemonData.Values.QuestionMarkId = 0
@@ -700,18 +710,21 @@ local function RoguemonExpansionExtension()
 
         local flagPath = self.RunManager and self.RunManager.getSkipAutoSaveFlagPath and self.RunManager.getSkipAutoSaveFlagPath() or nil
         if flagPath and FileManager.fileExists(flagPath) then
-            local prevAutoSave = Options["Auto save tracked game data"]
-            if prevAutoSave then
-                Options["Auto save tracked game data"] = false
-                Program.addFrameCounter("Roguemon:RestoreAutoSave", 2, function()
-                    Options["Auto save tracked game data"] = prevAutoSave
-                    GachaMonData.initialRecentMonsLoaded = true
-                    -- Force recalculation on next update so playerViewedInitialStars
-                    -- picks up the RecentMon that will be added in the same cycle.
-                    GachaMonData.playerViewedMon = nil
-                    Utils.printDebug("[Startup] New game started.")
-                end, 1, true)
-            end
+            -- New run: skip loading the previous run's tracked data. Do NOT toggle the
+            -- persisted "Auto save tracked game data" Option to achieve this -- any
+            -- Main.SaveSettings() during the load window serializes the whole Options
+            -- table to Settings.ini, persisting the temporary 'false' and leaving the
+            -- box permanently unchecked. Instead overwrite the one-shot frame-1 counter
+            -- that Program.initialize() already scheduled (runs before this startup), so
+            -- the load is skipped exactly as AutoSave.loadFromFile does when disabled.
+            Program.addFrameCounter("Tracker:AutoSave.loadFromFile", 1, function()
+                Tracker.LoadStatus = Tracker.LoadStatusKeys.AUTO_DISABLED
+                GachaMonData.initialRecentMonsLoaded = true
+                -- Force recalculation on next update so playerViewedInitialStars
+                -- picks up the RecentMon that will be added in the same cycle.
+                GachaMonData.playerViewedMon = nil
+                Utils.printDebug("[Startup] New game started.")
+            end, 1, true)
             FileManager.deleteFile(flagPath)
         end
 
@@ -720,8 +733,8 @@ local function RoguemonExpansionExtension()
         -- (called from AutoSave.loadFromFile on frame 1). If AutoSave is off, that
         -- path never runs and tryAddToRecentMons is permanently gated — no RecentMons
         -- are ever created, breaking GachaMon star change tracking.
-        -- Frame 3 gives both the AutoSave import (frame 1) and the new-game callback
-        -- (frame 2) a chance to run first.
+        -- Frame 3 gives the frame-1 loadFromFile counter (the core import, or our
+        -- new-run skip callback above) a chance to run first.
         Program.addFrameCounter("Roguemon:EnsureRecentMonsLoaded", 3, function()
             if not GachaMonData.initialRecentMonsLoaded then
                 GachaMonData.initialRecentMonsLoaded = true
@@ -779,7 +792,6 @@ local function RoguemonExpansionExtension()
         self.BuyPhaseManager.restoreCleansingState()
         self.ReminderManager.registerTrackerActions(self.TrackerActionManager)
         self.ItemManager.registerTrackerActions(self.TrackerActionManager)
-        self.RunManager.registerTrackerActions(self.TrackerActionManager)
         self.CurseManager.registerTrackerActions(self.TrackerActionManager)
 
         self.SegmentUI.register()
@@ -788,6 +800,7 @@ local function RoguemonExpansionExtension()
         end
 
         self.Core.Graphics.setIconOption()
+        self.Core.Graphics.setShinyIconPath()
 
         self.WatchManager.registerCb2Watch()
         self.WatchManager.registerMapWatch()
@@ -922,6 +935,119 @@ local function RoguemonExpansionExtension()
             originalBackTopOnClick(btn)
         end, "InfoScreen.Buttons.BackTop.onClick", originalBackTopOnClick)
 
+        -- Open Book Play Mode reveals randomized seed data, so its OFF -> ON
+        -- edge is treated the same as opening the current run's log on the
+        -- leaderboard: prompt to confirm, and on confirm publish a terminal
+        -- LOSS to the leaderboard before letting the toggle through. The
+        -- mutex side (greying "Enable Leaderboard" while Open Book is on)
+        -- lives in OptionsManager via the `disabledBy` predicate.
+        local openBookBtn = GameOptionsScreen.Buttons and GameOptionsScreen.Buttons["Open Book Play Mode"]
+        if openBookBtn then
+            local originalOpenBookOnClick = self.pristineOriginal(
+                "GameOptionsScreen.Buttons.OpenBookPlayMode.onClick",
+                openBookBtn.onClick
+            )
+            openBookBtn.onClick = self.tagWrapper(function(btn)
+                -- Only gate the OFF -> ON transition. Turning Open Book OFF
+                -- never DQs (it would only ever soften, not tighten, a prior
+                -- terminal state, which the ROM treats as one-way anyway).
+                if Options["Open Book Play Mode"] ~= true and self.Leaderboard then
+                    if not self.Leaderboard.confirmOpenBookWillEndRun() then
+                        return
+                    end
+                end
+                originalOpenBookOnClick(btn)
+            end, "GameOptionsScreen.Buttons.OpenBookPlayMode.onClick", originalOpenBookOnClick)
+        end
+
+        -- Every tracker feature that rewinds emulator state gets the same
+        -- treatment as the log-view / Open Book DQs: prompt first, and on
+        -- confirm publish the terminal LOSS through END_RUN_LEADERBOARD.
+        -- Without this, a restore only tripped the leaderboard's after-the-fact
+        -- frame-continuity check, which used to disable the uploader without
+        -- ever ending the run on the backend.
+        --
+        -- The two-stage buttons are wrapped at the click rather than at the
+        -- restore call so cancelling leaves no partial side effects behind
+        -- (the Time Machine rewinds Tracker.Data.playtime and creates its undo
+        -- point before restoring; the Game Over screen dismisses itself first).
+        -- Looked up late so a dev module reload can't leave these wrappers
+        -- calling into (and latching state on) a discarded Leaderboard table.
+        local function mayRestore(actionLabel, confirmLabel)
+            return self.Leaderboard.confirmStateRestoreWillEndRun(actionLabel, confirmLabel)
+        end
+
+        local retryBattleBtn = GameOverScreen.Buttons and GameOverScreen.Buttons.RetryBattle
+        if retryBattleBtn then
+            local originalRetryOnClick = self.pristineOriginal(
+                "GameOverScreen.Buttons.RetryBattle.onClick",
+                retryBattleBtn.onClick
+            )
+            retryBattleBtn.onClick = self.tagWrapper(function(btn)
+                -- The button arms on the first click and acts on the second;
+                -- only the acting click loads the battle-start savestate.
+                if btn.confirmAction and not mayRestore("Retrying this battle", "Retry battle (end run)") then
+                    btn.confirmAction = false
+                    btn.textColor = "Lower box text"
+                    Program.redraw(true)
+                    return
+                end
+                originalRetryOnClick(btn)
+            end, "GameOverScreen.Buttons.RetryBattle.onClick", originalRetryOnClick)
+        end
+
+        -- Restore-point buttons are rebuilt from scratch on every
+        -- buildOutPagedButtons() call, so gate them there rather than once at
+        -- startup. Rebuilding replaces the table wholesale, so no wrapper chain
+        -- accumulates across calls.
+        if TimeMachineScreen and TimeMachineScreen.buildOutPagedButtons then
+            local originalBuildPagedButtons = self.pristineOriginal(
+                "TimeMachineScreen.buildOutPagedButtons",
+                TimeMachineScreen.buildOutPagedButtons
+            )
+            TimeMachineScreen.buildOutPagedButtons = self.tagWrapper(function(...)
+                originalBuildPagedButtons(...)
+                for _, button in ipairs(TimeMachineScreen.Pager.Buttons or {}) do
+                    local originalOnClick = button.onClick
+                    button.onClick = self.tagWrapper(function(btn)
+                        -- Same two-stage confirm as Retry Battle: the first
+                        -- click only arms `confirmedRestore`.
+                        if btn.confirmedRestore and not mayRestore("Restoring an earlier point in time", "Restore (end run)") then
+                            btn.confirmedRestore = false
+                            btn:updateSelf()
+                            Program.redraw(true)
+                            return
+                        end
+                        originalOnClick(btn)
+                    end, "TimeMachineScreen.Pager.Buttons[].onClick", originalOnClick)
+                end
+            end, "TimeMachineScreen.buildOutPagedButtons", originalBuildPagedButtons)
+        end
+
+        -- Crash recovery restores a backup savestate up to three minutes old,
+        -- and its undo rewinds that. Both are reachable from Extras at any time,
+        -- crash or not, so they are gated too. Wrapped at the function (not the
+        -- click) since neither onClick mutates state before calling it.
+        if CrashRecoveryScreen then
+            local originalRecoverSave = self.pristineOriginal(
+                "CrashRecoveryScreen.recoverSave",
+                CrashRecoveryScreen.recoverSave
+            )
+            CrashRecoveryScreen.recoverSave = self.tagWrapper(function(...)
+                if not mayRestore("Recovering a backup save", "Recover save (end run)") then return end
+                return originalRecoverSave(...)
+            end, "CrashRecoveryScreen.recoverSave", originalRecoverSave)
+
+            local originalUndoRecoverSave = self.pristineOriginal(
+                "CrashRecoveryScreen.undoRecoverSave",
+                CrashRecoveryScreen.undoRecoverSave
+            )
+            CrashRecoveryScreen.undoRecoverSave = self.tagWrapper(function(...)
+                if not mayRestore("Undoing the save recovery", "Undo recovery (end run)") then return end
+                return originalUndoRecoverSave(...)
+            end, "CrashRecoveryScreen.undoRecoverSave", originalUndoRecoverSave)
+        end
+
         self.RunManager.setupRunProfile()
 
         -- Debounce LogSearchScreen on-screen keyboard clicks.
@@ -1022,6 +1148,7 @@ local function RoguemonExpansionExtension()
         if self.FieldStatusCarousel and self.FieldStatusCarousel.unregister then
             self.FieldStatusCarousel.unregister()
         end
+        self.Core.LogOverlay.removeTabButton()
         self.OverrideManager.restoreCoreTrackerFunctions()
 
         if self._origTryLoadData then
