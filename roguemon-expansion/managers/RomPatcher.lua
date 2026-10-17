@@ -61,114 +61,6 @@ local function compileLeaderboardUploader()
     end
 end
 
---- Get the .SaveRAM file path.
----@return string|nil path to the .SaveRAM file
-function self.getSaveRAMPath()
-    local ext = _G.Roguemon
-    if not ext or not ext.Paths then return nil end
-    local romPath = ext.Paths.ROGUEMON_ROM
-    return romPath and (romPath .. ".SaveRAM") or nil
-end
-
---- Check for existing save data and offer to migrate stats before patching.
---- Returns true if migration was accepted and cached, false if declined, nil if no save found.
----@return boolean|nil
-function self.offerStatsMigration()
-    local saveRAMPath = self.getSaveRAMPath()
-    if not saveRAMPath or not FileManager.fileExists(saveRAMPath) then
-        return nil
-    end
-
-    local SaveMigrator = _G.Roguemon and _G.Roguemon.SaveMigrator
-    if not SaveMigrator then return nil end
-
-    local stats = SaveMigrator.parseAndExtract(saveRAMPath)
-    if not stats then return nil end
-
-    -- Check if there are any meaningful stats to migrate
-    local hasStats = false
-    if stats.pokemonStats then
-        for _, ascTable in pairs(stats.pokemonStats) do
-            if next(ascTable) then
-                hasStats = true
-                break
-            end
-        end
-    end
-    if not hasStats then return nil end
-
-    -- Prompt 1: "Previous save data found!"
-    local accepted = nil
-    local promptComplete = false
-
-    local form = ExternalUI.BizForms.createForm(
-        "Save Data Migration", 440, 120, 100, 20, function()
-            accepted = true
-            promptComplete = true
-        end)
-    form:createLabel(
-        "Previous save data found! Would you like to migrate your", 15, 10)
-    form:createLabel(
-        "completion stats (wins, attempts, unlocks) to the new version?", 15, 26)
-    form.Controls.migrate = form:createButton("Migrate", 115, 66, function()
-        accepted = true
-        promptComplete = true
-        form:destroy()
-    end, 95, 25)
-    form.Controls.skip = form:createButton("Skip", 230, 66, function()
-        accepted = false
-        promptComplete = true
-        form:destroy()
-    end, 75, 25)
-
-    while not promptComplete do
-        Main.frameAdvance()
-    end
-
-    if accepted then
-        local cachePath = SaveMigrator.getCachePath()
-        SaveMigrator.saveToDisk(stats, cachePath)
-        return true
-    end
-
-    -- Prompt 2: Confirm declining
-    local confirmed = nil
-    promptComplete = false
-
-    local form2 = ExternalUI.BizForms.createForm(
-        "Confirm", 440, 110, 100, 20, function()
-            confirmed = false
-            promptComplete = true
-        end)
-    form2:createLabel(
-        "Are you sure? Your prior attempt and win statistics", 15, 10)
-    form2:createLabel(
-        "for each type will be lost.", 15, 26)
-    form2.Controls.confirm = form2:createButton("Yes, delete stats", 85, 60, function()
-        confirmed = true
-        promptComplete = true
-        form2:destroy()
-    end, 120, 25)
-    form2.Controls.goBack = form2:createButton("No, go back", 235, 60, function()
-        confirmed = false
-        promptComplete = true
-        form2:destroy()
-    end, 95, 25)
-
-    while not promptComplete do
-        Main.frameAdvance()
-    end
-
-    if confirmed then
-        return false -- user confirmed they don't want migration
-    end
-
-    -- User cancelled the decline → treat as accepting
-    local cachePath = SaveMigrator.getCachePath()
-    SaveMigrator.saveToDisk(stats, cachePath)
-    return true
-end
-
 function self.isROMVanilla()
     local hash = gameinfo.getromhash()
     if not hash then return false end
@@ -223,7 +115,6 @@ function self.tryPatchVanillaROM()
 
     local function onPatchDecision(accepted)
         if accepted then
-            self.offerStatsMigration()
             result = self.patchVanillaROM()
             if result then
                 local form = ExternalUI.BizForms.createForm(
@@ -349,7 +240,6 @@ function self.tryRepatchIfNeeded(gameSettings)
         form.Controls.patch = form:createButton("Apply Update", 110, 95, function()
             form:destroy()
 
-            self.offerStatsMigration()
             if applyBpsPatch() then
                 showCompletionAndLaunch()
             else

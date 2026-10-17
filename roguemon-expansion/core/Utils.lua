@@ -12,7 +12,6 @@ local DEBUG_TOPIC_DEFAULTS = {
     Patcher = false,
     Prize = false,
     Run = false,
-    SaveMigrator = false,
     Segment = false,
     Shop = false,
     Startup = true,
