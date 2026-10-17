@@ -264,7 +264,6 @@ local function RoguemonExpansionExtension()
 
     -- ROM patching (vanilla FireRed detection + BPS apply)
     self.RomPatcher        = safeLoad(managersPath .. "RomPatcher.lua")
-    self.SaveMigrator      = safeLoad(managersPath .. "SaveMigrator.lua")
 
     -- Supporting modules and utilities
     self.LoaderUtils       = safeLoad(self.extensionDir .. "LoaderUtils.lua")
@@ -588,11 +587,6 @@ local function RoguemonExpansionExtension()
         local valid, validationErr = self.GameSettings.validateRequiredFields()
         if not valid then
             error("RogueMon GameSettings validation failed:\n" .. (validationErr or "unknown error"))
-        end
-
-        -- Try importing cached stats from a previous save migration
-        if self.SaveMigrator then
-            self.SaveMigrator.tryImportCachedStats()
         end
 
         -- Re-read friendship evo threshold now that GameSettings has the correct
