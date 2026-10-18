@@ -32,6 +32,7 @@ local TEST_MODULES = {
     "DataHelper",
     "Pickle",
     "Leaderboard",
+    "UpdateChecker",
 }
 
 -- Wrap a test function so that asserts inside it (and inside functions it calls)
@@ -120,14 +121,16 @@ function Tests.run(module)
         tests[name] = loadTest(name)
     end
 
+    local base = module and module:gsub("Tests$", "")
+    if base and not tests[base] then
+        error(string.format("Tests.run: no test module %s in TEST_MODULES", module), 2)
+    end
+
     local prevTopic = Roguemon.Core.Utils.debugTopics.TEST
     Roguemon.Core.Utils.debugTopics.TEST = true
 
-    if module ~= nil then
-        local base = module:gsub("Tests$", "")
-        if tests[base] and tests[base].run then
-            tests[base].run()
-        end
+    if base then
+        tests[base].run()
     else
         for _, name in ipairs(TEST_MODULES) do
             tests[name].run()
