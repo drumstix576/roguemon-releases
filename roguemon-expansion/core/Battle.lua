@@ -243,6 +243,9 @@ local RGMN_EVT_MOVE_LEARNED         = 10
 -- GameSettings.leaderboardEventBeaconAddr) — written before the seqno bump
 -- so the tracker reads coherent state.
 local RGMN_EVT_LEADERBOARD          = 11
+-- LeaderboardEventAction values (rom/include/leaderboard_signature.h) that end a run.
+local LB_EVENT_WIN         = 3
+local LB_EVENT_LOSS        = 4
 -- Sharing is Caring handed a move from one battler to another. Payload matches
 -- MOVE_USED: the giver's species and the move. The ROM only emits it for a move
 -- in the giver's party entry, so a move it was handed reveals nothing.
@@ -411,6 +414,13 @@ function self.onTrackerEvent(addr, value, size)
     -- because LOSS specifically fires from CB2_WhiteOut where the outcome is
     -- already set. battler = action enum, species = current_trainer (alias `a`).
     if mode == RGMN_EVT_LEADERBOARD then
+        -- WIN and LOSS end the run, so its sealed log is restored. The ROM
+        -- sends them whether or not the leaderboard is on; a run it already
+        -- ended (log-view or rewind DQ, rules off) sends neither, and its log is
+        -- restored when viewed or at the next new run.
+        if battler == LB_EVENT_WIN or battler == LB_EVENT_LOSS then
+            Roguemon.LogManager.unsealLog(Roguemon.LogManager.getCurrentLogPath())
+        end
         Roguemon.Leaderboard.onRomEvent(battler, species)
         return
     end

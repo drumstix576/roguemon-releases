@@ -50,7 +50,7 @@ function RoguemonGameSettings.loadGameSettings()
     GameSettings.roguemonBuildProfile = Memory.readdword(startAddr + 0x18)
     GameSettings.roguemonConfigStamp = Memory.readdword(startAddr + 0x24)
 
-    local expectedConfigStamp = 0x377E1630
+    local expectedConfigStamp = 0x218DF74D
     GameSettings.roguemonConfigStampExpected = expectedConfigStamp
     if GameSettings.roguemonConfigStamp ~= expectedConfigStamp then
         error(string.format("RoguemonConfig stamp mismatch: ROM 0x%08X, expected 0x%08X", GameSettings.roguemonConfigStamp, expectedConfigStamp))
@@ -683,6 +683,16 @@ function RoguemonGameSettings.loadGameSettings()
     GameSettings.battleMonPpOffset = Memory.readword(startAddr + 0x714)
     GameSettings.shinyOdds = Memory.readword(startAddr + 0x716)
     GameSettings.pokemonStatsSpeciesCap = Memory.readword(startAddr + 0x718)
+    GameSettings.roguemonTrackerAncestralGiftOfferCountOffset = Memory.readword(startAddr + 0x71A)
+    GameSettings.roguemonTrackerAncestralGiftOfferOffset = Memory.readword(startAddr + 0x71C)
+    GameSettings.roguemonTrackerAncestralGiftOfferMax = Memory.readword(startAddr + 0x71E)
+    GameSettings.roguemonTrackerAbilityPatchTargetStatusOffset = Memory.readword(startAddr + 0x720)
+    GameSettings.roguemonTrackerAbilityPatchTargetAbilityOffset = Memory.readword(startAddr + 0x722)
+    GameSettings.abilityPatchTargetNoChosenMon = Memory.readword(startAddr + 0x724)
+    GameSettings.abilityPatchTargetOk = Memory.readword(startAddr + 0x726)
+    GameSettings.abilityPatchTargetBanned = Memory.readword(startAddr + 0x728)
+    GameSettings.abilityPatchTargetNoHidden = Memory.readword(startAddr + 0x72A)
+    GameSettings.abilityPatchItemId = Memory.readword(startAddr + 0x72C)
 
     -- TM/HM palette pointers
     GameSettings.gItemIconPalette_TMHM = {}

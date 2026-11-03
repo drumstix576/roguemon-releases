@@ -24,7 +24,14 @@ local function ensureLogParsed()
     end
 
     -- Keep raw lines for cross-referencing in tests
-    logLines = FileManager.readLinesFromFile(logPath)
+    -- Read through SealedLog so a run's sealed log is checked without
+    -- restoring the file; split as FileManager.readLinesFromFile does.
+    local logText, readErr = Roguemon.Core.SealedLog.readLog(logPath)
+    assert(logText, readErr)
+    logLines = {}
+    for line in logText:gmatch("([^\r\n]+)[\r\n]*") do
+        table.insert(logLines, line)
+    end
     if #logLines == 0 then
         Utils.printDebug("[WARN] Skipping LogManager tests; log file is empty")
         logSkipped = true
@@ -483,6 +490,59 @@ local function testPokemonCount()
 end
 
 ---------------------------------------------------------------------------
+-- Test: the log viewer's Pokemon screen lists all three ability slots, in
+-- order, one row each, above the Base Stats header
+---------------------------------------------------------------------------
+local function testDetailsScreenListsThreeAbilities()
+    if not ensureLogParsed() then return true end
+
+    -- A species whose three slots hold three different abilities, so a row
+    -- that repeats or drops one shows up as a wrong label.
+    local pokemonID, abilities
+    for id = 1, PokemonData.getTotal() do
+        local pokemon = RandomizerLog.Data.Pokemon[id]
+        if pokemon then
+            local a = pokemon.Abilities
+            if AbilityData.isValid(a[1]) and AbilityData.isValid(a[2]) and AbilityData.isValid(a[3])
+                and a[1] ~= a[2] and a[1] ~= a[3] and a[2] ~= a[3] then
+                pokemonID, abilities = id, a
+                break
+            end
+        end
+    end
+    assert(pokemonID, "No species with three distinct abilities in the log")
+
+    LogTabPokemonDetails.buildZoomButtons(pokemonID)
+
+    local rows, statsHeader = {}, nil
+    for _, button in ipairs(LogTabPokemonDetails.TemporaryButtons) do
+        if button.abilityId ~= nil then
+            table.insert(rows, button)
+        elseif button.getText and button:getText() == Resources.LogOverlay.LabelBaseStats then
+            statsHeader = button
+        end
+    end
+    assert(#rows == 3, string.format("Expected 3 ability rows, got %d", #rows))
+    assert(statsHeader, "Base Stats header not found")
+
+    for slot, row in ipairs(rows) do
+        local expected = string.format("%s: %s", ({ "1", "2", "H" })[slot], AbilityData.Abilities[abilities[slot]].name)
+        assert(row:getText() == expected,
+            string.format("Row %d reads '%s', expected '%s'", slot, row:getText(), expected))
+        if slot > 1 then
+            local above = rows[slot - 1].box
+            assert(above[2] + above[4] <= row.box[2],
+                string.format("Ability row %d overlaps row %d", slot, slot - 1))
+        end
+    end
+    local last = rows[#rows].box
+    assert(last[2] + last[4] <= statsHeader.box[2],
+        string.format("Ability row 3 ends at %d, below the Base Stats header at %d",
+            last[2] + last[4], statsHeader.box[2]))
+    return true
+end
+
+---------------------------------------------------------------------------
 -- Run all tests
 ---------------------------------------------------------------------------
 function LogManagerTests.run()
@@ -505,6 +565,7 @@ function LogManagerTests.run()
         tests.runTest("evolution data", testEvolutionData),
         tests.runTest("moveset data", testMovesetData),
         tests.runTest("Pokemon count sanity", testPokemonCount),
+        tests.runTest("details screen lists three abilities", testDetailsScreenListsThreeAbilities),
     }
 
     local allPassed = true

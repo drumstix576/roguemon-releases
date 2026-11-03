@@ -113,7 +113,7 @@ local function applyHistoryExtras(summaryItem, entry)
             local statLabels = { "HP", "ATK", "DEF", "SPA", "SPD", "SPE" }
             local statName = statLabels[(entry.extraValue or 0) + 1] or "Stat"
             if stage == 0 then
-                suffix = string.format(" (%s +10)", statName)
+                suffix = string.format(" (%s +15)", statName)
             elseif stage == 1 then
                 suffix = string.format(" (%s max)", statName)
             else

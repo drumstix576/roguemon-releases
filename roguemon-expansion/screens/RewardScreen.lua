@@ -141,6 +141,7 @@ local function getOptionDesc(def, optionIndex, state)
     if def.name and desc == def.name then
         desc = ""
     end
+    desc = self.PrizeManager.describeAbilityPatchGrant(def, desc)
     if desc == "" then
         local abilityDesc = getAbilityCapsuleDesc(def)
         if abilityDesc ~= "" then

@@ -358,6 +358,7 @@ local function testBoosterShotMoveFiltering()
 end
 
 local function testAncestralGiftChoices()
+    -- HG-G3-10: the choices are the ROM's offer buffer, read as written; the tracker derives nothing.
     withRestores(function(stubGlobal, stubField)
         local pm = Roguemon.PrizeManager
         assert(pm ~= nil, "PrizeManager missing")
@@ -367,47 +368,100 @@ local function testAncestralGiftChoices()
         stubField(pm, "taskScreens", {})
         pm.loadPrizeModules()
 
-        local fireType = PokemonData and PokemonData.Types and PokemonData.Types.FIRE or "Fire"
-        local waterType = PokemonData and PokemonData.Types and PokemonData.Types.WATER or "Water"
-        local grassType = PokemonData and PokemonData.Types and PokemonData.Types.GRASS or "Grass"
+        local charcoalId = findItemIdByName("Charcoal")
+        local mysticId = findItemIdByName("Mystic Water")
+        assert(charcoalId ~= nil, "Missing item id for Charcoal")
+        assert(mysticId ~= nil, "Missing item id for Mystic Water")
 
-        stubGlobal("MoveData", {
-            Categories = { STATUS = "Status" },
-            Moves = {
-                [1] = { id = 1, name = "FireMove", type = fireType, category = "Physical" },
-                [2] = { id = 2, name = "WaterMove", type = waterType, category = "Special" },
-                [3] = { id = 3, name = "StatusMove", type = grassType, category = "Status" },
-            },
-            buildData = function() end,
-        })
+        local base = 0x02030000
+        stubField(GameSettings, "roguemonTrackerDataAddr", base)
+        stubField(GameSettings, "roguemonTrackerAncestralGiftOfferCountOffset", 0x10)
+        stubField(GameSettings, "roguemonTrackerAncestralGiftOfferOffset", 0x12)
+        stubField(GameSettings, "roguemonTrackerAncestralGiftOfferMax", 4)
 
-        stubGlobal("Tracker", {
-            getPokemon = function()
-                return {
-                    roguemonChosen = 1,
-                    moves = { { id = 1 }, { id = 2 }, { id = 3 }, { id = 0 } },
-                }
-            end
+        local mem = {}
+        stubGlobal("Memory", {
+            readbyte = function(addr) return mem[addr] or 0 end,
+            readword = function(addr) return mem[addr] or 0 end,
         })
 
         stubField(pm, "PrizeDefsById", {
             [123] = { id = 123, name = "Ancestral Gift" },
         })
 
-        local choices = pm.getChoiceOverrides(123, {}) or {}
-        local charcoalId = findItemIdByName("Charcoal")
-        local mysticId = findItemIdByName("Mystic Water")
-
-        assert(charcoalId ~= nil, "Missing item id for Charcoal")
-        assert(mysticId ~= nil, "Missing item id for Mystic Water")
+        mem[base + 0x10] = 2
+        mem[base + 0x12] = mysticId
+        mem[base + 0x14] = charcoalId
+        local choices, reason = pm.getChoiceOverrides(123, {})
+        assert(reason == nil, "Unexpected reason: " .. tostring(reason))
         assert(#choices == 2, string.format("Expected 2 choices, got %d", #choices))
+        assert(choices[1] == mysticId and choices[2] == charcoalId, "Expected the ROM's offer in its order")
 
-        local choiceSet = {}
-        for _, id in ipairs(choices) do
-            choiceSet[id] = true
-        end
-        assert(choiceSet[charcoalId], "Expected Charcoal choice")
-        assert(choiceSet[mysticId], "Expected Mystic Water choice")
+        mem[base + 0x10] = 0
+        choices, reason = pm.getChoiceOverrides(123, {})
+        assert(#choices == 0, string.format("Expected no choices, got %d", #choices))
+        assert(reason == "Ancestral Gift rejected: no eligible moves", "Unexpected reason: " .. tostring(reason))
+    end)
+    return true
+end
+
+local function testAbilityPatchGrantDescription()
+    -- The Patch's target is the ROM's, read as written; the tracker only labels it.
+    withRestores(function(stubGlobal, stubField)
+        local pm = Roguemon.PrizeManager
+        assert(pm ~= nil, "PrizeManager missing")
+
+        local patchId = findItemIdByName("Ability Patch")
+        local candyId = findItemIdByName("Rare Candy")
+        assert(patchId ~= nil, "Missing item id for Ability Patch")
+        assert(candyId ~= nil, "Missing item id for Rare Candy")
+        local flashFireId = AbilityData.Values.FlashFireId
+        local flashFire = AbilityData.Abilities[flashFireId].name
+
+        local base = 0x02030000
+        stubField(GameSettings, "roguemonTrackerDataAddr", base)
+        stubField(GameSettings, "roguemonTrackerAbilityPatchTargetStatusOffset", 0x10)
+        stubField(GameSettings, "roguemonTrackerAbilityPatchTargetAbilityOffset", 0x12)
+        stubField(GameSettings, "abilityPatchTargetNoChosenMon", 0)
+        stubField(GameSettings, "abilityPatchTargetOk", 1)
+        stubField(GameSettings, "abilityPatchTargetBanned", 2)
+        stubField(GameSettings, "abilityPatchTargetNoHidden", 3)
+        stubField(GameSettings, "abilityPatchItemId", patchId)
+
+        local mem = {}
+        stubGlobal("Memory", {
+            readbyte = function(addr) return mem[addr] or 0 end,
+            readword = function(addr) return mem[addr] or 0 end,
+        })
+
+        local lootbox = { grants = { patchId, candyId } }
+        local desc = "Rare Candy x3, Ability Patch, Fresh Water."
+
+        mem[base + 0x10] = 1
+        mem[base + 0x12] = flashFireId
+        local got = pm.describeAbilityPatchGrant(lootbox, desc)
+        local want = "Rare Candy x3, Ability Patch (" .. flashFire .. "), Fresh Water."
+        assert(got == want, "Usable: got " .. got)
+
+        mem[base + 0x10] = 2
+        got = pm.describeAbilityPatchGrant(lootbox, desc)
+        want = "Rare Candy x3, Ability Patch (" .. flashFire .. " - Banned), Fresh Water."
+        assert(got == want, "Banned: got " .. got)
+
+        mem[base + 0x10] = 3
+        mem[base + 0x12] = 0
+        got = pm.describeAbilityPatchGrant(lootbox, desc)
+        want = "Rare Candy x3, Ability Patch (No hidden ability), Fresh Water."
+        assert(got == want, "No hidden: got " .. got)
+
+        mem[base + 0x10] = 0
+        got = pm.describeAbilityPatchGrant(lootbox, desc)
+        assert(got == desc, "No chosen mon: got " .. got)
+
+        mem[base + 0x10] = 1
+        mem[base + 0x12] = flashFireId
+        got = pm.describeAbilityPatchGrant({ grants = { candyId } }, desc)
+        assert(got == desc, "No Patch granted: got " .. got)
     end)
     return true
 end
@@ -814,6 +868,7 @@ function PrizeManagerTests.run()
         tests.runTest("selection watch requires changeCounter advance", testSelectionWatchRequiresChangeCounterAdvance),
         tests.runTest("booster shot move filtering", testBoosterShotMoveFiltering),
         tests.runTest("ancestral gift choices", testAncestralGiftChoices),
+        tests.runTest("ability patch grant description", testAbilityPatchGrantDescription),
         tests.runTest("offer prize queues selection", testOfferPrizeQueuesSelection),
         tests.runTest("select prize adds items", testSelectPrizeAddsItems),
         tests.runTest("reject owned prize", testRejectOwnedPrize),

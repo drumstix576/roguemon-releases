@@ -529,6 +529,29 @@ function LogManager.getLogFileAutodetected(postFix)
     return nil
 end
 
+-- The current run's log, next to the active ROM.
+function LogManager.getCurrentLogPath()
+    return Roguemon.getActiveRomPath() .. FileManager.Extensions.RANDOMIZER_LOGFILE
+end
+
+-- Restores a sealed log in place (see core/SealedLog.lua); a plain log is left
+-- as it is. Callers only get here once the log's run is over or the player has
+-- chosen to see it. Returns true, or false and an error message, which is also
+-- printed to the console.
+function LogManager.unsealLog(logPath)
+    local SealedLog = Roguemon.Core.SealedLog
+    if not SealedLog.isSealed(logPath) then
+        return true
+    end
+    local ok, err = SealedLog.unsealFile(logPath)
+    if ok then
+        Utils.printDebug("[Log] Restored the sealed log: %s", logPath)
+    else
+        print("> ERROR: Unable to restore the sealed log. " .. err)
+    end
+    return ok, err
+end
+
 -- Override: Always prompt for the previous log (the upstream caches the first
 -- selection and never asks again). For the current log, delegate to upstream.
 ---@param postfix string For example: "AutoRandomized", "PreviousAttempt", "Other", or "None"
@@ -543,6 +566,20 @@ function LogManager.viewLogFile(postfix, isCurrent)
 
     if postfix == FileManager.PostFixes.PREVIOUSATTEMPT then
         local logpath = LogManager.getLogFileFromPrompt()
+        if logpath and Roguemon.Core.SealedLog.isSealed(logpath) then
+            -- A sealed log picked here may be this run's own (the generated
+            -- folder holds a copy), so it gets the current log's gate.
+            local seed = Roguemon.Core.SealedLog.readSeed(logpath)
+            if seed == Roguemon.Core.SealedLog.readSeed(LogManager.getCurrentLogPath())
+                and not Roguemon.Leaderboard.confirmLogViewWillEndRun() then
+                return
+            end
+            local ok, err = LogManager.unsealLog(logpath)
+            if not ok then
+                Main.DisplayError("Unable to restore this sealed log.\n\n" .. err)
+                return
+            end
+        end
         if logpath then
             -- Clear cached parse data so the new file is actually parsed
             RandomizerLog.Data = {}
@@ -563,6 +600,12 @@ function LogManager.viewLogFile(postfix, isCurrent)
     local logpath = LogOverlay.getLogFileAutodetected(postfix)
     if logpath == nil and not LogOverlay.hasParsedThisLog(postfix) then
         logpath = LogOverlay.getLogFileFromPrompt()
+    end
+    -- The player has chosen to see this run's log, so the file is restored too.
+    -- The viewer reads the current run from the ROM, so it opens either way;
+    -- a failure is printed by unsealLog.
+    if logpath then
+        LogManager.unsealLog(logpath)
     end
     LogOverlay.parseAndDisplay(logpath)
 end

@@ -213,6 +213,8 @@ local function RoguemonExpansionExtension()
     self.Core.CoverageCalcScreen = safeLoad(corePath .. "CoverageCalcScreen.lua")
     self.Core.StartupScreen = safeLoad(corePath .. "StartupScreen.lua")
     self.Core.LogTabPokemon = safeLoad(corePath .. "LogTabPokemon.lua")
+    self.Core.LogTabPokemonDetails = safeLoad(corePath .. "LogTabPokemonDetails.lua")
+    self.Core.SealedLog = safeLoad(corePath .. "SealedLog.lua")
     -- Both tab modules define globals the LogOverlay override registers, so
     -- they have to load before it.
     self.Core.LogTabRoguemon = safeLoad(self.extensionDir .. "screens" .. FileManager.slash .. "LogTabRoguemon.lua")
@@ -436,16 +438,16 @@ local function RoguemonExpansionExtension()
     end
 
     function self.startup()
-        -- BizHawk 2.11.0 has a bug (#4631) where event.unregisterbyname can NRE
-        -- on a disposed mGBA core wrapper, which crashes the extension on every
-        -- watch (re)registration. Fixed in 2.11.1. Detect and bail before any
-        -- watch setup runs.
-        if Main.IsOnBizhawk() and client.getversion() == "2.11" then
+        -- RogueMon supports BizHawk 2.10 and 2.11.1. 2.8 and 2.9.x, and 2.11.0
+        -- (bug #4631), NRE when a Lua watch is registered on a disposed mGBA
+        -- core, which crashes the extension after the post-randomize ROM swap.
+        -- Detect and bail before any watch setup runs.
+        if Main.IsOnBizhawk() and (Main.emulator == Main.EMU.BIZHAWK28
+                or Main.emulator == Main.EMU.BIZHAWK29
+                or client.getversion() == "2.11") then
             Main.DisplayError(
-                "RogueMon does not support BizHawk 2.11.0.\n\n" ..
-                "BizHawk 2.11.0 has a known mGBA Lua callback bug (issue #4631) " ..
-                "that crashes the tracker extension. Please upgrade to 2.11.1 " ..
-                "(recommended) or downgrade to 2.10.")
+                "RogueMon does not support BizHawk " .. client.getversion() .. ".\n\n" ..
+                "Please use BizHawk 2.11.1 (recommended) or 2.10.")
             return
         end
 
