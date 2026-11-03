@@ -103,29 +103,33 @@ function self.LoadNextRom()
     local settingsFile = self.getSettingsFilePath(ascension, runType)
     Options.FILES["Settings File"] = settingsFile
 
-    -- Head-to-head manual seed: if a seed was armed via startManualSeedRun, force
-    -- it into this randomization. Main.GenerateNextRom() builds the randomizer CLI
-    -- command with no seed argument and lives in read-only core, so splice
-    -- "--seed N" onto the randomizer command by wrapping tryOsExecute for this
-    -- one call. The armed value lives in _G so it survives the Main.Run restart
-    -- between arming (at the tower) and this randomization.
+    -- Main.GenerateNextRom() builds the randomizer CLI command and lives in
+    -- read-only core, so extra arguments are spliced onto it by wrapping
+    -- tryOsExecute for this one call:
+    --   "--sealed-log": the log is written sealed, so it cannot be read in a
+    --     text editor during the run (see core/SealedLog.lua for when it is
+    --     restored).
+    --   "--seed N": head-to-head manual seed, if one was armed via
+    --     startManualSeedRun. The armed value lives in _G so it survives the
+    --     Main.Run restart between arming (at the tower) and this randomization.
     local manualSeed = _G.__roguemonPendingManualSeed
     _G.__roguemonPendingManualSeed = nil
-    local restoreOsExecute
     if manualSeed ~= nil then
         Utils.printDebug("[Run] Applying manual seed: %d", manualSeed)
-        local originalOsExecute = FileManager.tryOsExecute
-        restoreOsExecute = function() FileManager.tryOsExecute = originalOsExecute end
-        FileManager.tryOsExecute = function(command, ...)
-            if type(command) == "string" and command:find("-jar", 1, true) and command:find(" cli ", 1, true) then
+    end
+    local originalOsExecute = FileManager.tryOsExecute
+    FileManager.tryOsExecute = function(command, ...)
+        if type(command) == "string" and command:find("-jar", 1, true) and command:find(" cli ", 1, true) then
+            command = command .. " --sealed-log"
+            if manualSeed ~= nil then
                 command = string.format("%s --seed %d", command, manualSeed)
             end
-            return originalOsExecute(command, ...)
         end
+        return originalOsExecute(command, ...)
     end
 
     local nextRomInfo = Main.GenerateNextRom()
-    if restoreOsExecute then restoreOsExecute() end
+    FileManager.tryOsExecute = originalOsExecute
     -- Randomization failed; mark randomization complete so we're not stuck waiting
     if nextRomInfo == nil then
         self.markRandomizationComplete()
@@ -135,6 +139,15 @@ function self.LoadNextRom()
 
     -- Randomization completed; stamp the new ROM file, copy it, and mark randomization complete
     if nextRomInfo ~= nil then
+        -- The run that just ended keeps its log only as the PreviousAttempt copy
+        -- Main.SaveCurrentRom made before randomizing; restore it now.
+        local romFolder = nextRomInfo.filePath:sub(1, #nextRomInfo.filePath - #nextRomInfo.fileName)
+        local previousName = nextRomInfo.fileName:gsub(FileManager.PostFixes.AUTORANDOMIZED, FileManager.PostFixes.PREVIOUSATTEMPT)
+        local previousLog = romFolder .. previousName .. FileManager.Extensions.RANDOMIZER_LOGFILE
+        if FileManager.fileExists(previousLog) then
+            Roguemon.LogManager.unsealLog(previousLog)
+        end
+
         Main.ReadAttemptsCount(true)
         Main.currentSeed = Main.currentSeed + 1
         Main.WriteAttemptsCountToFile(nextRomInfo.attemptsFilePath)

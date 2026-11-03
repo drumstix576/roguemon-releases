@@ -478,6 +478,71 @@ function self.readPoolRemaining()
     return out
 end
 
+-- HG-G3-10: the Ancestral Gift's offer, as the ROM derived it (RoguemonPrizes_UpdateAncestralGiftOffer): the item ids
+-- in RoguemonTrackerData.ancestralGiftOffer, in order. The tracker keeps no copy of the rule.
+function self.readAncestralGiftOffer()
+    local trackerDataAddr = GameSettings.roguemonTrackerDataAddr
+    local countOffset = GameSettings.roguemonTrackerAncestralGiftOfferCountOffset
+    local offerOffset = GameSettings.roguemonTrackerAncestralGiftOfferOffset
+    local maxItems = GameSettings.roguemonTrackerAncestralGiftOfferMax
+
+    local count = Memory.readbyte(trackerDataAddr + countOffset)
+    assert(count <= maxItems, string.format("Ancestral Gift offer: count %d over %d", count, maxItems))
+    local out = {}
+    for i = 0, count - 1 do
+        out[#out + 1] = Memory.readword(trackerDataAddr + offerOffset + (i * 2))
+    end
+    return out
+end
+
+-- The Ability Patch's target on the chosen mon, as the ROM derived it (RoguemonUpdateAbilityPatchTarget): a status
+-- (GameSettings.abilityPatchTarget*) and the ability id. The tracker keeps no copy of the rule.
+function self.readAbilityPatchTarget()
+    local trackerDataAddr = GameSettings.roguemonTrackerDataAddr
+    return {
+        status = Memory.readbyte(trackerDataAddr + GameSettings.roguemonTrackerAbilityPatchTargetStatusOffset),
+        abilityId = Memory.readword(trackerDataAddr + GameSettings.roguemonTrackerAbilityPatchTargetAbilityOffset),
+    }
+end
+
+-- A prize that grants the Ability Patch names the Patch's target in its description: "Ability Patch (Flash Fire)",
+-- "Ability Patch (Comatose - Banned)" or "Ability Patch (No hidden ability)". With no chosen mon, or a description
+-- that does not name the Patch, the description is returned as is.
+function self.describeAbilityPatchGrant(def, desc)
+    local patchId = GameSettings.abilityPatchItemId
+    local grantsPatch = false
+    for _, itemId in ipairs(def.grants or {}) do
+        if itemId == patchId then
+            grantsPatch = true
+            break
+        end
+    end
+    if not grantsPatch then
+        return desc
+    end
+
+    local patchName = Roguemon.ItemManager.getItemName(patchId)
+    local nameStart, nameEnd = string.find(desc, patchName, 1, true)
+    if not nameStart then
+        return desc
+    end
+
+    local target = self.readAbilityPatchTarget()
+    local label
+    if target.status == GameSettings.abilityPatchTargetOk then
+        label = AbilityData.Abilities[target.abilityId].name
+    elseif target.status == GameSettings.abilityPatchTargetBanned then
+        label = AbilityData.Abilities[target.abilityId].name .. " - Banned"
+    elseif target.status == GameSettings.abilityPatchTargetNoHidden then
+        label = "No hidden ability"
+    else
+        assert(target.status == GameSettings.abilityPatchTargetNoChosenMon,
+            string.format("Ability Patch target: unknown status %d", target.status))
+        return desc
+    end
+    return string.sub(desc, 1, nameEnd) .. " (" .. label .. ")" .. string.sub(desc, nameEnd + 1)
+end
+
 function self.readPrizeHistory()
     local base = getPrizeHistoryBase()
     if not base then

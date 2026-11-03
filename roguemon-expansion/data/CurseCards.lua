@@ -7,6 +7,10 @@
 -- lineRow is the row (1-based) that sits on the shared separator line. A
 -- card without a separator gets the generic one.
 return {
+    ACID_RAIN = {
+        image = "acid_rain.png",
+        artist = "@Grom",
+    },
     CHAMELEON = {
         image = "chameleon.png",
         artist = "@punchingKirby",
@@ -68,6 +72,14 @@ return {
             },
         },
     },
+    HEADWIND = {
+        image = "headwind.png",
+        artist = "@punchingKirby",
+    },
+    KAIZO = {
+        image = "kaizo.png",
+        artist = "@punchingKirby",
+    },
     LIVE_AUDIENCE = {
         image = "live_audience.png",
         artist = "@lyrical",
@@ -110,6 +122,18 @@ return {
     NO_COVER = {
         image = "no_cover.png",
         artist = "@luckyteejay",
+    },
+    PERFECTLY_BALANCED = {
+        image = "perfectly_balanced.png",
+        artist = "@Grom",
+        separator = {
+            x = 6,
+            lineRow = 1,
+            rows = {
+                "111111111111111111111111111111111111111111111111111111111111..................111111111111111111111111111111111111111111111111111111111111",
+                ".222222222222222222222222222222222222222222222222222222222222..................22222222222222222222222222222222222222222222222222222222222",
+            },
+        },
     },
     TIME_WARP = {
         image = "time_warp.png",

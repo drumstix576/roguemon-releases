@@ -23,7 +23,14 @@ local function ensureLogParsed()
         return false
     end
 
-    logLines = FileManager.readLinesFromFile(logPath)
+    -- Read through SealedLog so a run's sealed log is checked without
+    -- restoring the file; split as FileManager.readLinesFromFile does.
+    local logText, readErr = Roguemon.Core.SealedLog.readLog(logPath)
+    assert(logText, readErr)
+    logLines = {}
+    for line in logText:gmatch("([^\r\n]+)[\r\n]*") do
+        table.insert(logLines, line)
+    end
     if #logLines == 0 then
         Utils.printDebug("[WARN] Skipping LogVerify tests; log file is empty")
         logSkipped = true
